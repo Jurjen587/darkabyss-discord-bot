@@ -128,8 +128,8 @@ function createArkShopCommandHandler(options) {
 					name: '#' + pkg.id + ' - ' + pkg.name,
 					value: [
 						formatCredits(pkg.price_credits),
-						'Server: ' + (pkg.server_name || 'Unknown'),
 						'Cluster: ' + (pkg.cluster_name || 'Unknown'),
+						'Delivery server: auto-detect on purchase',
 						pkg.description || '',
 					].filter((line) => line !== '').join(' | '),
 					inline: false,
@@ -176,12 +176,12 @@ function createArkShopCommandHandler(options) {
 
 				await replyWithEmbed(message, {
 					title: 'Purchase Created',
-					description: 'Your order has been created and queued for delivery.',
+					description: 'Your order has been created. Delivery will scan the target cluster and send it to the server where you are online.',
 					fields: [
 						{ name: 'Order ID', value: String(payload.order_id || '-'), inline: true },
 						{ name: 'Package', value: String(payload.package_name || packageId), inline: true },
 						{ name: 'Price', value: formatCredits(payload.price_credits || 0), inline: true },
-						{ name: 'Server', value: String(payload.server_name || payload.server_id || '-'), inline: true },
+						{ name: 'Target Cluster', value: String(payload.cluster_name || payload.cluster_id || '-'), inline: true },
 						{ name: 'EOSID', value: eosId, inline: false },
 						{ name: 'Specimen', value: specimen, inline: false },
 					],
