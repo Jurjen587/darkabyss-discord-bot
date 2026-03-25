@@ -22,7 +22,7 @@ jobs:
           script: |
             export APP_NAME="darkabyss-discord-bot"
             export BRANCH="main"
-            export DEPLOY_DIR="/var/www/discord-bot"
+            export DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
             cd "$DEPLOY_DIR"
             chmod +x scripts/deploy.sh
             ./scripts/deploy.sh
