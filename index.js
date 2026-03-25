@@ -4,7 +4,7 @@ const dotenv = require('dotenv');
 const { Client, Intents } = require('discord.js');
 const { createBalanceCommandHandler } = require('./commands/balance');
 const { createLotteryCommandHandler } = require('./commands/lottery');
-const { createArkShopCommandHandler } = require('./commands/arkshop');
+const { createArkShopCommandHandler, createArkShopInteractionHandler } = require('./commands/arkshop');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -43,6 +43,11 @@ const handleLotteryCommand = createLotteryCommandHandler({
 	adminUserIds,
 });
 const handleArkShopCommand = createArkShopCommandHandler({
+	commandPrefix,
+	apiBaseUrl: discordShopApiUrl,
+	apiToken: discordShopApiToken,
+});
+const handleArkShopInteraction = createArkShopInteractionHandler({
 	commandPrefix,
 	apiBaseUrl: discordShopApiUrl,
 	apiToken: discordShopApiToken,
@@ -262,6 +267,12 @@ client.on('messageCreate', (message) => {
 	handleArkShopCommand(message).catch((error) => {
 		console.error('Arkshop command failed:', error.message || error);
 		message.reply('Something went wrong while processing that arkshop command.').catch(() => {});
+	});
+});
+
+client.on('interactionCreate', (interaction) => {
+	handleArkShopInteraction(interaction).catch((error) => {
+		console.error('Arkshop interaction failed:', error.message || error);
 	});
 });
 
