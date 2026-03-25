@@ -1,7 +1,8 @@
 const path = require('path');
+const fs = require('fs');
 const https = require('https');
 const dotenv = require('dotenv');
-const { Client, Intents } = require('discord.js');
+const { Client, Intents, Permissions } = require('discord.js');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -18,6 +19,257 @@ const activityText = process.env.DISCORD_BOT_ACTIVITY_TEXT || 'darkabyss.nl';
 const nitradoApiBaseUrl = (process.env.NITRADO_API_BASE_URL || 'https://api.nitrado.net').replace(/\/+$/, '');
 const pollSecondsValue = Number.parseInt(process.env.NITRADO_POLL_SECONDS || '120', 10);
 const nitradoPollSeconds = Number.isFinite(pollSecondsValue) ? Math.max(30, pollSecondsValue) : 120;
+const balanceStartingAmountRaw = Number.parseFloat(process.env.BALANCE_STARTING_AMOUNT || '0');
+const balanceStartingAmount = Number.isFinite(balanceStartingAmountRaw) ? Math.max(0, balanceStartingAmountRaw) : 0;
+const adminUserIds = new Set(
+	(process.env.BALANCE_ADMIN_USER_IDS || '')
+		.split(',')
+		.map((value) => value.trim())
+		.filter((value) => value !== '')
+);
+
+const dataDir = path.join(__dirname, 'data');
+const balancesPath = path.join(dataDir, 'balances.json');
+
+function ensureDataFiles() {
+	if (!fs.existsSync(dataDir)) {
+		fs.mkdirSync(dataDir, { recursive: true });
+	}
+
+	if (!fs.existsSync(balancesPath)) {
+		fs.writeFileSync(balancesPath, JSON.stringify({}, null, 2) + '\n', 'utf8');
+	}
+}
+
+function readBalances() {
+	ensureDataFiles();
+
+	try {
+		const raw = fs.readFileSync(balancesPath, 'utf8');
+		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+			return parsed;
+		}
+	} catch (error) {
+		console.error('Failed to read balances.json, starting with empty balances:', error.message || error);
+	}
+
+	return {};
+}
+
+function writeBalances(balances) {
+	ensureDataFiles();
+	fs.writeFileSync(balancesPath, JSON.stringify(balances, null, 2) + '\n', 'utf8');
+}
+
+let balances = readBalances();
+
+function normalizeAmount(value) {
+	return Math.round(value * 100) / 100;
+}
+
+function getBalance(userId) {
+	const existing = Number(balances[userId]);
+	if (Number.isFinite(existing) && existing >= 0) {
+		return normalizeAmount(existing);
+	}
+
+	balances[userId] = normalizeAmount(balanceStartingAmount);
+	writeBalances(balances);
+	return balances[userId];
+}
+
+function setBalance(userId, amount) {
+	balances[userId] = normalizeAmount(Math.max(0, amount));
+	writeBalances(balances);
+	return balances[userId];
+}
+
+function parseAmount(raw) {
+	const value = Number.parseFloat(raw);
+	if (!Number.isFinite(value)) {
+		return null;
+	}
+
+	return normalizeAmount(value);
+}
+
+function formatAmount(amount) {
+	return normalizeAmount(amount).toLocaleString('en-US', {
+		minimumFractionDigits: 0,
+		maximumFractionDigits: 2,
+	});
+}
+
+function parseUserArgument(rawValue, message) {
+	if (!rawValue) {
+		return null;
+	}
+
+	if (message.mentions.users.size > 0) {
+		return message.mentions.users.first();
+	}
+
+	const id = rawValue.replace(/[<@!>]/g, '');
+	if (!/^\d{15,25}$/.test(id)) {
+		return null;
+	}
+
+	return message.client.users.cache.get(id) || null;
+}
+
+function isBalanceAdmin(message) {
+	if (adminUserIds.has(message.author.id)) {
+		return true;
+	}
+
+	if (message.member && message.member.permissions && message.member.permissions.has(Permissions.FLAGS.ADMINISTRATOR)) {
+		return true;
+	}
+
+	return false;
+}
+
+async function handleBalanceCommand(message) {
+	const content = (message.content || '').trim();
+	if (!content.startsWith('/')) {
+		return;
+	}
+
+	const parts = content.split(/\s+/);
+	const baseCommand = (parts[0] || '').toLowerCase();
+	if (baseCommand !== '/balance' && baseCommand !== '/bal') {
+		return;
+	}
+
+	const subCommand = (parts[1] || '').toLowerCase();
+
+	if (!subCommand) {
+		const targetUser = message.mentions.users.first() || message.author;
+		const amount = getBalance(targetUser.id);
+		await message.reply(targetUser.id === message.author.id
+			? 'Your balance is **' + formatAmount(amount) + '**.'
+			: targetUser.username + ' has **' + formatAmount(amount) + '**.');
+		return;
+	}
+
+	if (subCommand.startsWith('<@') || /^\d{15,25}$/.test(subCommand)) {
+		const targetUser = parseUserArgument(parts[1], message);
+		if (!targetUser || targetUser.bot) {
+			await message.reply('Usage: `/bal @user`');
+			return;
+		}
+
+		const amount = getBalance(targetUser.id);
+		await message.reply(targetUser.username + ' has **' + formatAmount(amount) + '**.');
+		return;
+	}
+
+	if (subCommand === 'transfer') {
+		const targetUser = parseUserArgument(parts[2], message);
+		const amount = parseAmount(parts[3]);
+
+		if (!targetUser || targetUser.bot) {
+			await message.reply('Usage: `/bal transfer @user amount`');
+			return;
+		}
+
+		if (!Number.isFinite(amount) || amount <= 0) {
+			await message.reply('Transfer amount must be a number greater than 0.');
+			return;
+		}
+
+		if (targetUser.id === message.author.id) {
+			await message.reply('You cannot transfer balance to yourself.');
+			return;
+		}
+
+		const senderBalance = getBalance(message.author.id);
+		if (senderBalance < amount) {
+			await message.reply('Insufficient balance. You have **' + formatAmount(senderBalance) + '**.');
+			return;
+		}
+
+		setBalance(message.author.id, senderBalance - amount);
+		setBalance(targetUser.id, getBalance(targetUser.id) + amount);
+
+		await message.reply('Transferred **' + formatAmount(amount) + '** to ' + targetUser.toString() + '.');
+		return;
+	}
+
+	if (subCommand === 'set' || subCommand === 'add' || subCommand === 'remove') {
+		if (!isBalanceAdmin(message)) {
+			await message.reply('You need admin permissions to use this command.');
+			return;
+		}
+
+		const targetUser = parseUserArgument(parts[2], message);
+		const amount = parseAmount(parts[3]);
+
+		if (!targetUser || targetUser.bot) {
+			await message.reply('Usage: `/bal ' + subCommand + ' @user amount`');
+			return;
+		}
+
+		if (!Number.isFinite(amount) || amount < 0) {
+			await message.reply('Amount must be a number of 0 or higher.');
+			return;
+		}
+
+		let nextBalance = getBalance(targetUser.id);
+		if (subCommand === 'set') {
+			nextBalance = amount;
+		}
+
+		if (subCommand === 'add') {
+			nextBalance += amount;
+		}
+
+		if (subCommand === 'remove') {
+			nextBalance = Math.max(0, nextBalance - amount);
+		}
+
+		setBalance(targetUser.id, nextBalance);
+		await message.reply(targetUser.toString() + ' now has **' + formatAmount(nextBalance) + '**.');
+		return;
+	}
+
+	if (subCommand === 'top' || subCommand === 'leaderboard') {
+		const topEntries = Object.entries(balances)
+			.map(([userId, amount]) => [userId, Number(amount)])
+			.filter(([, amount]) => Number.isFinite(amount) && amount > 0)
+			.sort((a, b) => b[1] - a[1])
+			.slice(0, 10);
+
+		if (topEntries.length === 0) {
+			await message.reply('No balances yet.');
+			return;
+		}
+
+		const lines = topEntries.map(([userId, amount], index) => {
+			const member = message.guild ? message.guild.members.cache.get(userId) : null;
+			const name = member ? member.user.username : 'User ' + userId;
+			return (index + 1) + '. ' + name + ' - ' + formatAmount(amount);
+		});
+
+		await message.reply('Balance leaderboard:\n' + lines.join('\n'));
+		return;
+	}
+
+	if (subCommand === 'help') {
+		await message.reply([
+			'Balance commands:',
+			'`/balance` or `/bal`',
+			'`/bal @user`',
+			'`/bal transfer @user amount`',
+			'`/bal top`',
+			'Admin: `/bal set @user amount`, `/bal add @user amount`, `/bal remove @user amount`',
+		].join('\n'));
+		return;
+	}
+
+	await message.reply('Unknown balance command. Use `/bal help`.');
+}
 
 function parseServiceIds(rawServiceIds) {
   return (rawServiceIds || '')
@@ -50,7 +302,7 @@ const activityTypeMap = {
 const activityType = activityTypeMap[activityTypeRaw] || 'PLAYING';
 
 const client = new Client({
-	intents: [Intents.FLAGS.GUILDS],
+	intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES, Intents.FLAGS.GUILD_MESSAGE_CONTENT],
 });
 
 let lastPresenceText = '';
@@ -203,6 +455,17 @@ client.once('ready', async () => {
 	} else {
 		console.log('Nitrado polling disabled. Set NITRADO_1_API_TOKEN/NITRADO_1_SERVICE_IDS and NITRADO_2_API_TOKEN/NITRADO_2_SERVICE_IDS to enable it.');
 	}
+});
+
+client.on('messageCreate', (message) => {
+	if (!message || !message.author || message.author.bot) {
+		return;
+	}
+
+	handleBalanceCommand(message).catch((error) => {
+		console.error('Balance command failed:', error.message || error);
+		message.reply('Something went wrong while processing that command.').catch(() => {});
+	});
 });
 
 client.on('error', (error) => {
