@@ -1,0 +1,28 @@
+name: Deploy to web server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            export APP_NAME="darkabyss-discord-bot"
+            export BRANCH="main"
+            export DEPLOY_DIR="/var/www/discord-bot"
+            cd "$DEPLOY_DIR"
+            chmod +x scripts/deploy.sh
+            ./scripts/deploy.sh
