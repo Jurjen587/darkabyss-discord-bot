@@ -38,7 +38,7 @@ function decodeCtx(value) {
 }
 
 function makeApiRequester(apiBaseUrl, apiToken) {
-	return function requestJson(method, endpoint, payload) {
+	function singleRequest(method, endpoint, payload) {
 		return new Promise((resolve, reject) => {
 			if (!apiBaseUrl || !apiToken) {
 				reject(new Error('ARK Shop API is not configured.'));
@@ -66,6 +66,12 @@ function makeApiRequester(apiBaseUrl, apiToken) {
 						let parsed = {};
 						try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
 
+						if (response.statusCode === 429) {
+							const retryAfter = Number(response.headers['retry-after']) || 2;
+							reject({ retryAfter, message: parsed.message || 'Rate limited' });
+							return;
+						}
+
 						if (response.statusCode < 200 || response.statusCode >= 300) {
 							reject(new Error(parsed.message || 'API error (' + response.statusCode + ')'));
 							return;
@@ -81,6 +87,20 @@ function makeApiRequester(apiBaseUrl, apiToken) {
 			if (body) req.write(body);
 			req.end();
 		});
+	}
+
+	return async function requestJson(method, endpoint, payload) {
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			try {
+				return await singleRequest(method, endpoint, payload);
+			} catch (err) {
+				if (err && typeof err.retryAfter === 'number' && attempt < 2) {
+					await new Promise((r) => setTimeout(r, err.retryAfter * 1000));
+					continue;
+				}
+				throw err instanceof Error ? err : new Error(err.message || 'API request failed');
+			}
+		}
 	};
 }
 
