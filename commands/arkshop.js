@@ -622,35 +622,40 @@ function createArkShopInteractionHandler(options) {
 		if (action === 'buy') {
 			const pkgId = parts[2];
 			await interaction.deferReply({ ephemeral: true });
+
+			// ── Step 1: look up the user's saved profile ──
+			let discordUser = null;
 			try {
-				// Look up the user's saved EOS ID + specimen
-				let discordUser = null;
-				try {
-					discordUser = await requestJson('GET', '/users/' + interaction.user.id);
-				} catch (userErr) {
-					// Only swallow 404 (user not found yet); re-throw everything else (429, 500, etc.)
-					if (!userErr.message || !userErr.message.includes('404')) {
-						throw userErr;
-					}
-				}
-
-				const missing = [];
-				if (!discordUser?.eos_id)   missing.push('EOS ID  →  `' + commandPrefix + 'arkshop set eosid <YOUR_EOS_ID>`');
-				if (!discordUser?.specimen) missing.push('Specimen  →  `' + commandPrefix + 'arkshop set specimen <YOUR_SPECIMEN_NAME>`');
-
-				if (missing.length > 0) {
-					await interaction.editReply({
-						embeds: [{
-							title: '⚠️ Profile incomplete',
-							description: 'Before you can buy, save the following:\n\n' + missing.join('\n'),
-							color: EMBED_COLOR_ERROR,
-							footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
-							timestamp: new Date().toISOString(),
-						}],
-					});
+				discordUser = await requestJson('GET', '/users/' + interaction.user.id);
+			} catch (userErr) {
+				const msg = userErr.message || '';
+				if (!msg.includes('404') && !msg.includes('User not found')) {
+					// Non-404 error (e.g. 500, network) — surface it with context
+					await interaction.editReply({ content: '❌ Could not load your profile: ' + msg });
 					return;
 				}
+				// 404 means no profile yet — discordUser stays null, handled below
+			}
 
+			const missing = [];
+			if (!discordUser?.eos_id)   missing.push('EOS ID  →  `' + commandPrefix + 'arkshop set eosid <YOUR_EOS_ID>`');
+			if (!discordUser?.specimen) missing.push('Specimen  →  `' + commandPrefix + 'arkshop set specimen <YOUR_SPECIMEN_NAME>`');
+
+			if (missing.length > 0) {
+				await interaction.editReply({
+					embeds: [{
+						title: 'Profile incomplete',
+						description: 'Before you can buy, save the following:\n\n' + missing.join('\n'),
+						color: EMBED_COLOR_ERROR,
+						footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
+						timestamp: new Date().toISOString(),
+					}],
+				});
+				return;
+			}
+
+			// ── Step 2: submit the purchase ──
+			try {
 				const payload = await requestJson('POST', '/purchase', {
 					package_id:       Number(pkgId),
 					discord_user_id:  interaction.user.id,
@@ -661,20 +666,20 @@ function createArkShopInteractionHandler(options) {
 
 				await interaction.editReply({
 					embeds: [{
-						title: '✅ Purchase confirmed!',
+						title: 'Purchase confirmed!',
 						description: 'Your order is queued. The bot will scan the cluster and deliver to the server where you are online.',
 						color: EMBED_COLOR_SUCCESS,
 						fields: [
-							{ name: '📦 Package',  value: String(payload.package_name || '—'), inline: true },
-							{ name: '💰 Price',    value: formatCredits(payload.price_credits || 0), inline: true },
-							{ name: '🆔 Order ID', value: String(payload.order_id || '—'),      inline: true },
+							{ name: 'Package',  value: String(payload.package_name || '—'), inline: true },
+							{ name: 'Price',    value: formatCredits(payload.price_credits || 0), inline: true },
+							{ name: 'Order ID', value: String(payload.order_id || '—'), inline: true },
 						],
 						footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
 						timestamp: new Date().toISOString(),
 					}],
 				});
-			} catch (err) {
-				await interaction.editReply({ content: '❌ ' + (err.message || 'Purchase failed.') });
+			} catch (purchaseErr) {
+				await interaction.editReply({ content: '❌ Purchase failed: ' + (purchaseErr.message || 'unknown error') });
 			}
 			return;
 		}
