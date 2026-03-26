@@ -324,6 +324,69 @@ function createArkShopCommandHandler(options) {
 			return;
 		}
 
+		// ── Set EOS ID / Specimen ──
+		if (sub === 'set') {
+			const field = (parts[2] || '').toLowerCase();
+			const value = parts.slice(3).join(' ').trim();
+
+			if (field !== 'eosid' && field !== 'specimen') {
+				await message.reply({
+					embeds: [{
+						title: '🛒 ARK Shop — Set Profile',
+						description: [
+							'Save your EOS ID and character name so you can buy with one click.',
+							'',
+							'`' + commandPrefix + 'arkshop set eosid <YOUR_EOS_ID>`',
+							'`' + commandPrefix + 'arkshop set specimen <YOUR_SPECIMEN_NAME>`',
+						].join('\n'),
+						color: EMBED_COLOR_DEFAULT,
+						footer: { text: 'DarkAbyss ARK Shop' },
+						timestamp: new Date().toISOString(),
+					}],
+					allowedMentions: { repliedUser: false },
+				});
+				return;
+			}
+
+			if (!value) {
+				const label = field === 'eosid' ? 'EOS ID' : 'Specimen name';
+				await message.reply({
+					content: '❌ Please provide a value. Example: `' + commandPrefix + 'arkshop set ' + field + ' YOUR_VALUE_HERE`',
+					allowedMentions: { repliedUser: false },
+				});
+				return;
+			}
+
+			try {
+				const payload = {
+					discord_id:       message.author.id,
+					discord_username: message.author.tag || message.author.username,
+				};
+				if (field === 'eosid')    payload.eos_id   = value;
+				if (field === 'specimen') payload.specimen = value;
+
+				await requestJson('POST', '/users', payload);
+
+				const fieldLabel = field === 'eosid' ? 'EOS ID' : 'Specimen';
+				await message.reply({
+					embeds: [{
+						title: '✅ ' + fieldLabel + ' saved',
+						description: 'Your **' + fieldLabel + '** has been set to:\n`' + value + '`\n\nYou can now buy packages with a single click on the **🛒 Buy Now** button.',
+						color: EMBED_COLOR_SUCCESS,
+						footer: { text: 'DarkAbyss ARK Shop' },
+						timestamp: new Date().toISOString(),
+					}],
+					allowedMentions: { repliedUser: false },
+				});
+			} catch (err) {
+				await message.reply({
+					content: '❌ ' + (err.message || 'Failed to save your settings.'),
+					allowedMentions: { repliedUser: false },
+				});
+			}
+			return;
+		}
+
 		// ── Buy command ──
 		if (sub === 'buy') {
 			const packageId = Number.parseInt(parts[2] || '', 10);
@@ -379,8 +442,11 @@ function createArkShopCommandHandler(options) {
 			embeds: [{
 				title: '🛒 ARK Shop — Help',
 				description: [
-					'`' + commandPrefix + 'arkshop` — Browse packages by category',
-					'`' + commandPrefix + 'arkshop buy <packageId> <EOSID> <SPECIMEN>` — Purchase a package',
+					'`' + commandPrefix + 'arkshop` — Browse the shop',
+					'`' + commandPrefix + 'arkshop set eosid <EOS_ID>` — Save your EOS ID',
+					'`' + commandPrefix + 'arkshop set specimen <NAME>` — Save your character name',
+					'',
+					'Once your EOS ID and specimen are saved, press **🛒 Buy Now** on any package to purchase instantly.',
 				].join('\n'),
 				color: EMBED_COLOR_DEFAULT,
 				footer: { text: 'DarkAbyss ARK Shop' },
@@ -562,30 +628,61 @@ function createArkShopInteractionHandler(options) {
 			return;
 		}
 
-		// ── Show buy prompt (ephemeral, only visible to clicker) ──
+		// ── Buy Now button: auto-lookup user, then purchase ──
 		if (action === 'buy') {
 			const pkgId = parts[2];
 			await interaction.deferReply({ ephemeral: true });
 			try {
+				// Look up the user's saved EOS ID + specimen
+				let discordUser = null;
+				try {
+					discordUser = await requestJson('GET', '/users/' + interaction.user.id);
+				} catch {
+					// 404 = not found, other errors fall through below
+				}
+
+				const missing = [];
+				if (!discordUser?.eos_id)   missing.push('EOS ID  →  `' + commandPrefix + 'arkshop set eosid <YOUR_EOS_ID>`');
+				if (!discordUser?.specimen) missing.push('Specimen  →  `' + commandPrefix + 'arkshop set specimen <YOUR_SPECIMEN_NAME>`');
+
+				if (missing.length > 0) {
+					await interaction.editReply({
+						embeds: [{
+							title: '⚠️ Profile incomplete',
+							description: 'Before you can buy, save the following:\n\n' + missing.join('\n'),
+							color: EMBED_COLOR_ERROR,
+							footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
+							timestamp: new Date().toISOString(),
+						}],
+					});
+					return;
+				}
+
 				const pkg = await requestJson('GET', '/packages/' + pkgId);
+				const payload = await requestJson('POST', '/purchase', {
+					package_id:       Number(pkgId),
+					discord_user_id:  interaction.user.id,
+					discord_username: interaction.user.tag || interaction.user.username,
+					eos_id:           discordUser.eos_id,
+					specimen:         discordUser.specimen,
+				});
+
 				await interaction.editReply({
 					embeds: [{
-						title: '🛒 Buy — ' + pkg.name,
-						description: [
-							'**Price:** ' + formatCredits(pkg.price_credits),
-							'**Cluster:** ' + (pkg.cluster_name || 'Any cluster'),
-							'',
-							'To complete your purchase, send the following command in the shop channel:',
-							'```' + commandPrefix + 'arkshop buy ' + pkgId + ' <YOUR_EOSID> <SPECIMEN_NAME>```',
-							'> Replace `<YOUR_EOSID>` with your EOS ID and `<SPECIMEN_NAME>` with your in-game character name.',
-						].join('\n'),
+						title: '✅ Purchase confirmed!',
+						description: 'Your order is queued. The bot will scan the cluster and deliver to the server where you are online.',
 						color: EMBED_COLOR_SUCCESS,
+						fields: [
+							{ name: '📦 Package',  value: String(payload.package_name || pkg.name), inline: true },
+							{ name: '💰 Price',    value: formatCredits(payload.price_credits || 0), inline: true },
+							{ name: '🆔 Order ID', value: String(payload.order_id || '—'),           inline: true },
+						],
 						footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
 						timestamp: new Date().toISOString(),
 					}],
 				});
 			} catch (err) {
-				await interaction.editReply({ content: '❌ ' + err.message });
+				await interaction.editReply({ content: '❌ ' + (err.message || 'Purchase failed.') });
 			}
 			return;
 		}
