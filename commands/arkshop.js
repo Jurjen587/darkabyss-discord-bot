@@ -1,4 +1,5 @@
 const https = require('https');
+const http = require('http');
 const { MessageActionRow, MessageButton } = require('discord.js');
 
 const EMBED_COLOR_DEFAULT = 15859730; // orange
@@ -47,7 +48,8 @@ function makeApiRequester(apiBaseUrl, apiToken) {
 
 			const url = new URL(apiBaseUrl + endpoint);
 			const body = payload ? JSON.stringify(payload) : '';
-			const req = https.request(
+			const transport = url.protocol === 'https:' ? https : http;
+			const req = transport.request(
 				url,
 				{
 					method,
@@ -68,11 +70,13 @@ function makeApiRequester(apiBaseUrl, apiToken) {
 
 						if (response.statusCode === 429) {
 							const retryAfter = Number(response.headers['retry-after']) || 2;
+							console.error('[ArkShop API] 429 on ' + method + ' ' + endpoint + ' — retry-after: ' + retryAfter + 's — body: ' + raw.slice(0, 500));
 							reject({ retryAfter, message: parsed.message || 'Rate limited' });
 							return;
 						}
 
 						if (response.statusCode < 200 || response.statusCode >= 300) {
+							console.error('[ArkShop API] ' + response.statusCode + ' on ' + method + ' ' + endpoint + ' — body: ' + raw.slice(0, 500));
 							reject(new Error(parsed.message || 'API error (' + response.statusCode + ')'));
 							return;
 						}
