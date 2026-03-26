@@ -98,10 +98,6 @@ function buildCategoryPageMessage(categories, page) {
 	const start = clampedPage * pageSize;
 	const visible = categories.slice(start, start + pageSize);
 
-	const lines = visible.map((cat, i) => {
-		return '**' + (i + 1) + '.** ' + cat.name + ' (' + (cat.package_count || 0) + ')';
-	});
-
 	const selectRow = new MessageActionRow();
 	for (let i = 0; i < pageSize; i += 1) {
 		const cat = visible[i];
@@ -132,16 +128,27 @@ function buildCategoryPageMessage(categories, page) {
 		components.push(navRow);
 	}
 
+	const catFields = visible.map((cat, i) => ({
+		name: String(i + 1) + '.  ' + (cat ? cat.name : '—'),
+		value: cat
+			? (cat.package_count || 0) + ' package' + ((cat.package_count || 0) !== 1 ? 's' : '') + (cat.description ? '\n' + truncate(cat.description, 80) : '')
+			: '\u200b',
+		inline: true,
+	}));
+
+	// pad to even columns so Discord lays out in a 2-column grid
+	if (catFields.length % 2 !== 0) {
+		catFields.push({ name: '\u200b', value: '\u200b', inline: true });
+	}
+
 	return {
 		embeds: [{
-			title: '🛒 ARK Shop',
+			title: '🛒  Dark Abyss  —  ARK Shop',
 			description:
-				'**' + categories.length + '** ' +
-				(categories.length === 1 ? 'category' : 'categories') + ' available.\n' +
-				'Use buttons **1-4** to select a category on this page.\n\n' +
-				(lines.length ? lines.join('\n') : 'No categories on this page.') +
-				(totalPages > 1 ? '\n\nPage **' + (clampedPage + 1) + '**/**' + totalPages + '**' : ''),
+				'Press a number to open that category.' +
+				(totalPages > 1 ? '  \u2014  Page **' + (clampedPage + 1) + ' / ' + totalPages + '**' : ''),
 			color: EMBED_COLOR_DEFAULT,
+			fields: catFields,
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
@@ -160,10 +167,6 @@ function buildPackagePageMessage(packages, catId, catName, page) {
 	const clampedPage = Math.min(safePage, totalPages - 1);
 	const start = clampedPage * pageSize;
 	const visible = packages.slice(start, start + pageSize);
-
-	const lines = visible.map((pkg, i) => {
-		return '**' + (i + 1) + '.** ' + pkg.name + ' · ' + formatCredits(pkg.price_credits);
-	});
 
 	const selectRow = new MessageActionRow();
 	for (let i = 0; i < pageSize; i += 1) {
@@ -204,19 +207,26 @@ function buildPackagePageMessage(packages, catId, catName, page) {
 		navRow = new MessageActionRow().addComponents(backButton);
 	}
 
+	const pkgFields = visible.map((pkg, i) => ({
+		name: String(i + 1) + '.  ' + (pkg ? pkg.name : '—'),
+		value: pkg
+			? '💰 ' + formatCredits(pkg.price_credits) + (pkg.description ? '\n' + truncate(pkg.description, 80) : '')
+			: '\u200b',
+		inline: true,
+	}));
+
+	if (pkgFields.length % 2 !== 0) {
+		pkgFields.push({ name: '\u200b', value: '\u200b', inline: true });
+	}
+
 	return {
 		embeds: [{
-			title: '📦 ' + catName,
+			title: '📦  ' + catName,
 			description:
-				'Use buttons **1-4** to select a package on this page.\n\n' +
-				(lines.length ? lines.join('\n') : 'No packages on this page.') +
-				'\n\nPage **' + (clampedPage + 1) + '**/**' + totalPages + '**',
+				'Press a number to view details and buy.' +
+				(totalPages > 1 ? '  \u2014  Page **' + (clampedPage + 1) + ' / ' + totalPages + '**' : ''),
 			color: EMBED_COLOR_DEFAULT,
-			fields: visible.map((pkg) => ({
-				name: '#' + pkg.id + ' — ' + pkg.name,
-				value: formatCredits(pkg.price_credits) + ' · ' + (pkg.cluster_name || 'Any cluster'),
-				inline: false,
-			})),
+			fields: pkgFields,
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
@@ -226,12 +236,10 @@ function buildPackagePageMessage(packages, catId, catName, page) {
 
 function buildPackageDetailMessage(pkg, catId, catName, commandPrefix) {
 	const fields = [
-		{ name: '💰 Price',   value: formatCredits(pkg.price_credits),      inline: true },
-		{ name: '🗺️ Cluster', value: pkg.cluster_name || 'Any cluster',      inline: true },
-		{ name: '📂 Category', value: pkg.category_name || 'Uncategorised',  inline: true },
+		{ name: '💰 Price', value: formatCredits(pkg.price_credits), inline: false },
 	];
 	if (pkg.description) {
-		fields.unshift({ name: 'Description', value: pkg.description, inline: false });
+		fields.unshift({ name: '📋 Description', value: pkg.description, inline: false });
 	}
 
 	return {
