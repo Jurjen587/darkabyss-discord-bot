@@ -24,6 +24,19 @@ function formatCredits(value) {
 	return Number.isFinite(n) ? Math.round(n) + ' credits' : '0 credits';
 }
 
+function encodeCtx(obj) {
+	return Buffer.from(JSON.stringify(obj), 'utf8').toString('base64url');
+}
+
+function decodeCtx(value) {
+	try {
+		const raw = Buffer.from(String(value || ''), 'base64url').toString('utf8');
+		return JSON.parse(raw);
+	} catch {
+		return null;
+	}
+}
+
 function makeApiRequester(apiBaseUrl, apiToken) {
 	return function requestJson(method, endpoint, payload) {
 		return new Promise((resolve, reject) => {
@@ -74,19 +87,46 @@ function makeApiRequester(apiBaseUrl, apiToken) {
 // ─── Message builders ────────────────────────────────────────────────────────
 
 function buildCategoryMessage(categories) {
-	const rows = [];
-	for (const chunk of chunkArray(categories.slice(0, 20), 4)) {
-		const row = new MessageActionRow();
-		for (const cat of chunk) {
-			row.addComponents(
-				new MessageButton()
-					.setCustomId('arkshop:cat:' + cat.id + ':' + cat.name)
-					.setLabel(truncate(cat.name, 80))
-					.setStyle('PRIMARY')
-			);
-		}
-		rows.push(row);
+	return buildCategoryPageMessage(categories, 0);
+}
+
+function buildCategoryPageMessage(categories, page) {
+	const pageSize = 4;
+	const safePage = Math.max(0, Number.isInteger(page) ? page : 0);
+	const totalPages = Math.max(1, Math.ceil(categories.length / pageSize));
+	const clampedPage = Math.min(safePage, totalPages - 1);
+	const start = clampedPage * pageSize;
+	const visible = categories.slice(start, start + pageSize);
+
+	const lines = visible.map((cat, i) => {
+		return '**' + (i + 1) + '.** ' + cat.name + ' (' + (cat.package_count || 0) + ')';
+	});
+
+	const selectRow = new MessageActionRow();
+	for (let i = 0; i < pageSize; i += 1) {
+		const cat = visible[i];
+		const ctx = cat ? encodeCtx({ page: clampedPage, catId: cat.id, catName: cat.name }) : encodeCtx({ page: clampedPage });
+		selectRow.addComponents(
+			new MessageButton()
+				.setCustomId('arkshop:catn:' + (i + 1) + ':' + ctx)
+				.setLabel(String(i + 1))
+				.setStyle('PRIMARY')
+				.setDisabled(!cat)
+		);
 	}
+
+	const navRow = new MessageActionRow().addComponents(
+		new MessageButton()
+			.setCustomId('arkshop:cats:page:' + Math.max(0, clampedPage - 1))
+			.setLabel('Prev')
+			.setStyle('SECONDARY')
+			.setDisabled(clampedPage <= 0),
+		new MessageButton()
+			.setCustomId('arkshop:cats:page:' + Math.min(totalPages - 1, clampedPage + 1))
+			.setLabel('Next')
+			.setStyle('SECONDARY')
+			.setDisabled(clampedPage >= totalPages - 1)
+	);
 
 	return {
 		embeds: [{
@@ -94,60 +134,82 @@ function buildCategoryMessage(categories) {
 			description:
 				'**' + categories.length + '** ' +
 				(categories.length === 1 ? 'category' : 'categories') + ' available.\n' +
-				'Select a category below to browse packages:',
+				'Use buttons **1-4** to select a category on this page.\n\n' +
+				(lines.length ? lines.join('\n') : 'No categories on this page.') +
+				'\n\nPage **' + (clampedPage + 1) + '**/**' + totalPages + '**',
 			color: EMBED_COLOR_DEFAULT,
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
-		components: rows,
+		components: [selectRow, navRow],
 	};
 }
 
 function buildPackageMessage(packages, catId, catName) {
-	const visible = packages.slice(0, 12);
-	const rows = [];
+	return buildPackagePageMessage(packages, catId, catName, 0);
+}
 
-	for (const chunk of chunkArray(visible, 3)) {
-		const row = new MessageActionRow();
-		for (const pkg of chunk) {
-			const label = truncate(pkg.name + ' — ' + formatCredits(pkg.price_credits), 80);
-			row.addComponents(
-				new MessageButton()
-					.setCustomId('arkshop:pkg:' + pkg.id + ':' + catId + ':' + catName)
-					.setLabel(label)
-					.setStyle('SUCCESS')
-			);
-		}
-		rows.push(row);
+function buildPackagePageMessage(packages, catId, catName, page) {
+	const pageSize = 4;
+	const safePage = Math.max(0, Number.isInteger(page) ? page : 0);
+	const totalPages = Math.max(1, Math.ceil(packages.length / pageSize));
+	const clampedPage = Math.min(safePage, totalPages - 1);
+	const start = clampedPage * pageSize;
+	const visible = packages.slice(start, start + pageSize);
+
+	const lines = visible.map((pkg, i) => {
+		return '**' + (i + 1) + '.** ' + pkg.name + ' · ' + formatCredits(pkg.price_credits);
+	});
+
+	const selectRow = new MessageActionRow();
+	for (let i = 0; i < pageSize; i += 1) {
+		const pkg = visible[i];
+		const ctx = pkg
+			? encodeCtx({ page: clampedPage, pkgId: pkg.id, catId, catName })
+			: encodeCtx({ page: clampedPage, catId, catName });
+		selectRow.addComponents(
+			new MessageButton()
+				.setCustomId('arkshop:pkgn:' + (i + 1) + ':' + ctx)
+				.setLabel(String(i + 1))
+				.setStyle('SUCCESS')
+				.setDisabled(!pkg)
+		);
 	}
 
-	rows.push(
-		new MessageActionRow().addComponents(
-			new MessageButton()
-				.setCustomId('arkshop:cats')
-				.setLabel('← Back to Categories')
-				.setStyle('SECONDARY')
-		)
+	const navRow = new MessageActionRow().addComponents(
+		new MessageButton()
+			.setCustomId('arkshop:catpage:' + catId + ':' + encodeCtx({ catName, page: Math.max(0, clampedPage - 1) }))
+			.setLabel('Prev')
+			.setStyle('SECONDARY')
+			.setDisabled(clampedPage <= 0),
+		new MessageButton()
+			.setCustomId('arkshop:catpage:' + catId + ':' + encodeCtx({ catName, page: Math.min(totalPages - 1, clampedPage + 1) }))
+			.setLabel('Next')
+			.setStyle('SECONDARY')
+			.setDisabled(clampedPage >= totalPages - 1),
+		new MessageButton()
+			.setCustomId('arkshop:cats')
+			.setLabel('← Categories')
+			.setStyle('SECONDARY')
 	);
-
-	const countNote = visible.length === packages.length
-		? '**' + packages.length + '** package(s) available.'
-		: 'Showing **' + visible.length + '** of **' + packages.length + '** packages.';
 
 	return {
 		embeds: [{
 			title: '📦 ' + catName,
-			description: countNote + '\nClick a package to see details and buy.',
+			description:
+				'Use buttons **1-4** to select a package on this page.\n\n' +
+				(lines.length ? lines.join('\n') : 'No packages on this page.') +
+				'\n\nPage **' + (clampedPage + 1) + '**/**' + totalPages + '**',
 			color: EMBED_COLOR_DEFAULT,
 			fields: visible.map((pkg) => ({
 				name: '#' + pkg.id + ' — ' + pkg.name,
 				value: formatCredits(pkg.price_credits) + ' · ' + (pkg.cluster_name || 'Any cluster'),
-				inline: true,
+				inline: false,
 			})),
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
-		components: rows,
+		components: [selectRow, navRow],
 	};
 }
 
@@ -331,6 +393,7 @@ function createArkShopInteractionHandler(options) {
 		if (action === 'cats') {
 			await interaction.deferUpdate();
 			try {
+				const page = Number.parseInt(parts[3] || '0', 10);
 				const data       = await requestJson('GET', '/categories');
 				const categories = Array.isArray(data.categories)
 					? data.categories.filter((c) => c.package_count > 0)
@@ -349,7 +412,7 @@ function createArkShopInteractionHandler(options) {
 					});
 					return;
 				}
-				await interaction.editReply(buildCategoryMessage(categories));
+				await interaction.editReply(buildCategoryPageMessage(categories, Number.isInteger(page) ? page : 0));
 			} catch (err) {
 				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
 			}
@@ -393,6 +456,61 @@ function createArkShopInteractionHandler(options) {
 			return;
 		}
 
+		if (action === 'catn') {
+			const ctx = decodeCtx(parts.slice(3).join(':'));
+			if (!ctx || !ctx.catId || !ctx.catName) {
+				await interaction.reply({ content: '❌ That category button is no longer valid. Open the shop again.', ephemeral: true });
+				return;
+			}
+			await interaction.deferUpdate();
+			try {
+				const data = await requestJson('GET', '/packages?category_id=' + ctx.catId);
+				const packages = Array.isArray(data.packages) ? data.packages : [];
+				if (packages.length === 0) {
+					await interaction.editReply({
+						embeds: [{
+							title: '📦 ' + ctx.catName,
+							description: '📭 No packages in this category.',
+							color: EMBED_COLOR_DEFAULT,
+							footer: { text: 'DarkAbyss ARK Shop' },
+							timestamp: new Date().toISOString(),
+						}],
+						components: [
+							new MessageActionRow().addComponents(
+								new MessageButton()
+									.setCustomId('arkshop:cats:page:' + (Number.isInteger(ctx.page) ? ctx.page : 0))
+									.setLabel('← Back to Categories')
+									.setStyle('SECONDARY')
+							),
+						],
+					});
+					return;
+				}
+				await interaction.editReply(buildPackagePageMessage(packages, String(ctx.catId), String(ctx.catName), 0));
+			} catch (err) {
+				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
+			}
+			return;
+		}
+
+		if (action === 'catpage') {
+			const catId = parts[2];
+			const ctx = decodeCtx(parts.slice(3).join(':'));
+			if (!ctx || !ctx.catName) {
+				await interaction.reply({ content: '❌ That page button is no longer valid. Open the shop again.', ephemeral: true });
+				return;
+			}
+			await interaction.deferUpdate();
+			try {
+				const data = await requestJson('GET', '/packages?category_id=' + catId);
+				const packages = Array.isArray(data.packages) ? data.packages : [];
+				await interaction.editReply(buildPackagePageMessage(packages, String(catId), String(ctx.catName), Number.isInteger(ctx.page) ? ctx.page : 0));
+			} catch (err) {
+				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
+			}
+			return;
+		}
+
 		// ── Show package detail ──
 		if (action === 'pkg') {
 			const pkgId   = parts[2];
@@ -402,6 +520,22 @@ function createArkShopInteractionHandler(options) {
 			try {
 				const pkg = await requestJson('GET', '/packages/' + pkgId);
 				await interaction.editReply(buildPackageDetailMessage(pkg, catId, catName, commandPrefix));
+			} catch (err) {
+				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
+			}
+			return;
+		}
+
+		if (action === 'pkgn') {
+			const ctx = decodeCtx(parts.slice(3).join(':'));
+			if (!ctx || !ctx.pkgId || !ctx.catId || !ctx.catName) {
+				await interaction.reply({ content: '❌ That package button is no longer valid. Open the category again.', ephemeral: true });
+				return;
+			}
+			await interaction.deferUpdate();
+			try {
+				const pkg = await requestJson('GET', '/packages/' + ctx.pkgId);
+				await interaction.editReply(buildPackageDetailMessage(pkg, String(ctx.catId), String(ctx.catName), commandPrefix));
 			} catch (err) {
 				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
 			}
