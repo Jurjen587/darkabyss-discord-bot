@@ -128,27 +128,24 @@ function buildCategoryPageMessage(categories, page) {
 		components.push(navRow);
 	}
 
-	const catFields = visible.map((cat, i) => ({
-		name: String(i + 1) + '.  ' + (cat ? cat.name : '—'),
-		value: cat
-			? (cat.package_count || 0) + ' package' + ((cat.package_count || 0) !== 1 ? 's' : '') + (cat.description ? '\n' + truncate(cat.description, 80) : '')
-			: '\u200b',
-		inline: true,
-	}));
+	const catLines = visible.map((cat, i) => {
+		if (!cat) return '';
+		const count = (cat.package_count || 0) + ' package' + ((cat.package_count || 0) !== 1 ? 's' : '');
+		const desc  = cat.description ? '\n  ' + truncate(cat.description, 100) : '';
+		return '**' + (i + 1) + '.  ' + cat.name + '**  ·  ' + count + desc;
+	}).filter(Boolean);
 
-	// pad to even columns so Discord lays out in a 2-column grid
-	if (catFields.length % 2 !== 0) {
-		catFields.push({ name: '\u200b', value: '\u200b', inline: true });
-	}
+	const pageNote = totalPages > 1 ? '\nPage ' + (clampedPage + 1) + ' of ' + totalPages : '';
 
 	return {
 		embeds: [{
-			title: '🛒  Dark Abyss  —  ARK Shop',
+			title: 'Dark Abyss — ARK Shop',
 			description:
-				'Press a number to open that category.' +
-				(totalPages > 1 ? '  \u2014  Page **' + (clampedPage + 1) + ' / ' + totalPages + '**' : ''),
+				'Select a category by pressing a number below.' +
+				pageNote +
+				'\n\n' +
+				catLines.join('\n\n'),
 			color: EMBED_COLOR_DEFAULT,
-			fields: catFields,
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
@@ -207,26 +204,24 @@ function buildPackagePageMessage(packages, catId, catName, page) {
 		navRow = new MessageActionRow().addComponents(backButton);
 	}
 
-	const pkgFields = visible.map((pkg, i) => ({
-		name: String(i + 1) + '.  ' + (pkg ? pkg.name : '—'),
-		value: pkg
-			? '💰 ' + formatCredits(pkg.price_credits) + (pkg.description ? '\n' + truncate(pkg.description, 80) : '')
-			: '\u200b',
-		inline: true,
-	}));
+	const pkgLines = visible.map((pkg, i) => {
+		if (!pkg) return '';
+		const price = formatCredits(pkg.price_credits);
+		const desc  = pkg.description ? '\n  ' + truncate(pkg.description, 100) : '';
+		return '**' + (i + 1) + '.  ' + pkg.name + '**  ·  ' + price + desc;
+	}).filter(Boolean);
 
-	if (pkgFields.length % 2 !== 0) {
-		pkgFields.push({ name: '\u200b', value: '\u200b', inline: true });
-	}
+	const pageNote = totalPages > 1 ? '\nPage ' + (clampedPage + 1) + ' of ' + totalPages : '';
 
 	return {
 		embeds: [{
-			title: '📦  ' + catName,
+			title: catName,
 			description:
-				'Press a number to view details and buy.' +
-				(totalPages > 1 ? '  \u2014  Page **' + (clampedPage + 1) + ' / ' + totalPages + '**' : ''),
+				'Select a package by pressing a number below.' +
+				pageNote +
+				'\n\n' +
+				pkgLines.join('\n\n'),
 			color: EMBED_COLOR_DEFAULT,
-			fields: pkgFields,
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
@@ -235,18 +230,13 @@ function buildPackagePageMessage(packages, catId, catName, page) {
 }
 
 function buildPackageDetailMessage(pkg, catId, catName, commandPrefix) {
-	const fields = [
-		{ name: '💰 Price', value: formatCredits(pkg.price_credits), inline: false },
-	];
-	if (pkg.description) {
-		fields.unshift({ name: '📋 Description', value: pkg.description, inline: false });
-	}
+	const descLine = pkg.description ? pkg.description + '\n\n' : '';
 
 	return {
 		embeds: [{
-			title: '📦 ' + pkg.name,
+			title: pkg.name,
+			description: descLine + '**Price:** ' + formatCredits(pkg.price_credits),
 			color: EMBED_COLOR_SUCCESS,
-			fields,
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
@@ -254,15 +244,15 @@ function buildPackageDetailMessage(pkg, catId, catName, commandPrefix) {
 			new MessageActionRow().addComponents(
 				new MessageButton()
 					.setCustomId('arkshop:buy:' + pkg.id)
-					.setLabel('🛒 Buy Now')
+					.setLabel('Buy Now')
 					.setStyle('SUCCESS'),
 				new MessageButton()
 					.setCustomId('arkshop:cat:' + catId + ':' + catName)
-					.setLabel('← Back to Packages')
+					.setLabel('← Back')
 					.setStyle('SECONDARY'),
 				new MessageButton()
 					.setCustomId('arkshop:cats')
-					.setLabel('🏠 All Categories')
+					.setLabel('All Categories')
 					.setStyle('SECONDARY')
 			),
 		],
