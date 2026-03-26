@@ -658,7 +658,6 @@ function createArkShopInteractionHandler(options) {
 					return;
 				}
 
-				const pkg = await requestJson('GET', '/packages/' + pkgId);
 				const payload = await requestJson('POST', '/purchase', {
 					package_id:       Number(pkgId),
 					discord_user_id:  interaction.user.id,
@@ -673,9 +672,9 @@ function createArkShopInteractionHandler(options) {
 						description: 'Your order is queued. The bot will scan the cluster and deliver to the server where you are online.',
 						color: EMBED_COLOR_SUCCESS,
 						fields: [
-							{ name: '📦 Package',  value: String(payload.package_name || pkg.name), inline: true },
+							{ name: '📦 Package',  value: String(payload.package_name || '—'), inline: true },
 							{ name: '💰 Price',    value: formatCredits(payload.price_credits || 0), inline: true },
-							{ name: '🆔 Order ID', value: String(payload.order_id || '—'),           inline: true },
+							{ name: '🆔 Order ID', value: String(payload.order_id || '—'),      inline: true },
 						],
 						footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
 						timestamp: new Date().toISOString(),
