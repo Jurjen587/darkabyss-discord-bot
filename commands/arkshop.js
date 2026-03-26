@@ -115,18 +115,22 @@ function buildCategoryPageMessage(categories, page) {
 		);
 	}
 
-	const navRow = new MessageActionRow().addComponents(
-		new MessageButton()
-			.setCustomId('arkshop:cats:page:' + Math.max(0, clampedPage - 1))
-			.setLabel('Prev')
-			.setStyle('SECONDARY')
-			.setDisabled(clampedPage <= 0),
-		new MessageButton()
-			.setCustomId('arkshop:cats:page:' + Math.min(totalPages - 1, clampedPage + 1))
-			.setLabel('Next')
-			.setStyle('SECONDARY')
-			.setDisabled(clampedPage >= totalPages - 1)
-	);
+	const components = [selectRow];
+	if (totalPages > 1) {
+		const navRow = new MessageActionRow().addComponents(
+			new MessageButton()
+				.setCustomId('arkshop:cats:page:' + Math.max(0, clampedPage - 1) + ':prev')
+				.setLabel('◀ Prev')
+				.setStyle('SECONDARY')
+				.setDisabled(clampedPage <= 0),
+			new MessageButton()
+				.setCustomId('arkshop:cats:page:' + Math.min(totalPages - 1, clampedPage + 1) + ':next')
+				.setLabel('Next ▶')
+				.setStyle('SECONDARY')
+				.setDisabled(clampedPage >= totalPages - 1)
+		);
+		components.push(navRow);
+	}
 
 	return {
 		embeds: [{
@@ -136,12 +140,12 @@ function buildCategoryPageMessage(categories, page) {
 				(categories.length === 1 ? 'category' : 'categories') + ' available.\n' +
 				'Use buttons **1-4** to select a category on this page.\n\n' +
 				(lines.length ? lines.join('\n') : 'No categories on this page.') +
-				'\n\nPage **' + (clampedPage + 1) + '**/**' + totalPages + '**',
+				(totalPages > 1 ? '\n\nPage **' + (clampedPage + 1) + '**/**' + totalPages + '**' : ''),
 			color: EMBED_COLOR_DEFAULT,
 			footer: { text: 'DarkAbyss ARK Shop' },
 			timestamp: new Date().toISOString(),
 		}],
-		components: [selectRow, navRow],
+		components,
 	};
 }
 
@@ -176,22 +180,29 @@ function buildPackagePageMessage(packages, catId, catName, page) {
 		);
 	}
 
-	const navRow = new MessageActionRow().addComponents(
-		new MessageButton()
-			.setCustomId('arkshop:catpage:' + catId + ':' + encodeCtx({ catName, page: Math.max(0, clampedPage - 1) }))
-			.setLabel('Prev')
-			.setStyle('SECONDARY')
-			.setDisabled(clampedPage <= 0),
-		new MessageButton()
-			.setCustomId('arkshop:catpage:' + catId + ':' + encodeCtx({ catName, page: Math.min(totalPages - 1, clampedPage + 1) }))
-			.setLabel('Next')
-			.setStyle('SECONDARY')
-			.setDisabled(clampedPage >= totalPages - 1),
-		new MessageButton()
-			.setCustomId('arkshop:cats')
-			.setLabel('← Categories')
-			.setStyle('SECONDARY')
-	);
+	const backButton = new MessageButton()
+		.setCustomId('arkshop:cats')
+		.setLabel('← Categories')
+		.setStyle('SECONDARY');
+
+	let navRow;
+	if (totalPages > 1) {
+		navRow = new MessageActionRow().addComponents(
+			new MessageButton()
+				.setCustomId('arkshop:catpage:' + catId + ':prev:' + encodeCtx({ catName, page: Math.max(0, clampedPage - 1) }))
+				.setLabel('◀ Prev')
+				.setStyle('SECONDARY')
+				.setDisabled(clampedPage <= 0),
+			new MessageButton()
+				.setCustomId('arkshop:catpage:' + catId + ':next:' + encodeCtx({ catName, page: Math.min(totalPages - 1, clampedPage + 1) }))
+				.setLabel('Next ▶')
+				.setStyle('SECONDARY')
+				.setDisabled(clampedPage >= totalPages - 1),
+			backButton
+		);
+	} else {
+		navRow = new MessageActionRow().addComponents(backButton);
+	}
 
 	return {
 		embeds: [{
@@ -495,7 +506,8 @@ function createArkShopInteractionHandler(options) {
 
 		if (action === 'catpage') {
 			const catId = parts[2];
-			const ctx = decodeCtx(parts.slice(3).join(':'));
+			// parts[3] is the direction marker (prev/next), encoded context starts at parts[4]
+			const ctx = decodeCtx(parts.slice(4).join(':'));
 			if (!ctx || !ctx.catName) {
 				await interaction.reply({ content: '❌ That page button is no longer valid. Open the shop again.', ephemeral: true });
 				return;
