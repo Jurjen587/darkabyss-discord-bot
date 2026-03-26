@@ -637,8 +637,11 @@ function createArkShopInteractionHandler(options) {
 				let discordUser = null;
 				try {
 					discordUser = await requestJson('GET', '/users/' + interaction.user.id);
-				} catch {
-					// 404 = not found, other errors fall through below
+				} catch (userErr) {
+					// Only swallow 404 (user not found yet); re-throw everything else (429, 500, etc.)
+					if (!userErr.message || !userErr.message.includes('404')) {
+						throw userErr;
+					}
 				}
 
 				const missing = [];
