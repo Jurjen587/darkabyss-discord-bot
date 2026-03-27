@@ -1,6 +1,7 @@
 const https = require('https');
 const http = require('http');
 const { MessageActionRow, MessageButton } = require('discord.js');
+const { getBalance, setBalance } = require('./balanceStore');
 
 const EMBED_COLOR_DEFAULT = 15859730; // orange
 const EMBED_COLOR_SUCCESS = 3066993;  // green
@@ -411,6 +412,32 @@ function createArkShopCommandHandler(options) {
 				return;
 			}
 
+			let pkgInfo;
+			try {
+				pkgInfo = await requestJson('GET', '/packages/' + packageId);
+			} catch (err) {
+				await message.reply({
+					content: '❌ Package not found or inactive.',
+					allowedMentions: { repliedUser: false },
+				});
+				return;
+			}
+
+			const userBalance = getBalance(message.author.id, 0);
+			if (userBalance < pkgInfo.price_credits) {
+				await message.reply({
+					embeds: [{
+						title: '❌ Insufficient credits',
+						description: 'This package costs **' + formatCredits(pkgInfo.price_credits) + '** but you only have **' + formatCredits(userBalance) + '**.',
+						color: EMBED_COLOR_ERROR,
+						footer: { text: 'DarkAbyss ARK Shop' },
+						timestamp: new Date().toISOString(),
+					}],
+					allowedMentions: { repliedUser: false },
+				});
+				return;
+			}
+
 			try {
 				const payload = await requestJson('POST', '/purchase', {
 					package_id:       packageId,
@@ -420,18 +447,24 @@ function createArkShopCommandHandler(options) {
 					specimen,
 				});
 
+				const deducted = payload.price_credits || pkgInfo.price_credits || 0;
+				if (deducted > 0) {
+					setBalance(message.author.id, userBalance - deducted);
+				}
+
 				await message.reply({
 					embeds: [{
 						title: '✅ Purchase Created',
 						description: 'Your order is queued. The bot will scan the cluster and deliver to the server where you are online.',
 						color: EMBED_COLOR_SUCCESS,
 						fields: [
-							{ name: 'Order ID', value: String(payload.order_id || '—'),            inline: true },
-							{ name: 'Package',  value: String(payload.package_name || packageId), inline: true },
-							{ name: 'Price',    value: formatCredits(payload.price_credits || 0), inline: true },
-							{ name: 'Cluster',  value: String(payload.cluster_name || '—'),       inline: true },
-							{ name: 'EOSID',    value: eosId,                                     inline: true },
-							{ name: 'Specimen', value: specimen,                                  inline: true },
+							{ name: 'Order ID',      value: String(payload.order_id || '—'),            inline: true },
+							{ name: 'Package',       value: String(payload.package_name || packageId), inline: true },
+							{ name: 'Price',         value: formatCredits(deducted),                    inline: true },
+							{ name: 'Cluster',       value: String(payload.cluster_name || '—'),        inline: true },
+							{ name: 'EOSID',         value: eosId,                                      inline: true },
+							{ name: 'Specimen',      value: specimen,                                   inline: true },
+							{ name: 'New Balance',   value: formatCredits(getBalance(message.author.id, 0)), inline: true },
 						],
 						footer: { text: 'DarkAbyss ARK Shop' },
 						timestamp: new Date().toISOString(),
@@ -655,7 +688,30 @@ function createArkShopInteractionHandler(options) {
 				return;
 			}
 
-			// ── Step 2: submit the purchase ──
+			// ── Step 2: check balance ──
+			let pkgInfo;
+			try {
+				pkgInfo = await requestJson('GET', '/packages/' + pkgId);
+			} catch (err) {
+				await interaction.editReply({ content: '❌ Could not load package: ' + (err.message || 'unknown error') });
+				return;
+			}
+
+			const userBalance = getBalance(interaction.user.id, 0);
+			if (userBalance < pkgInfo.price_credits) {
+				await interaction.editReply({
+					embeds: [{
+						title: '❌ Insufficient credits',
+						description: 'This package costs **' + formatCredits(pkgInfo.price_credits) + '** but you only have **' + formatCredits(userBalance) + '**.',
+						color: EMBED_COLOR_ERROR,
+						footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
+						timestamp: new Date().toISOString(),
+					}],
+				});
+				return;
+			}
+
+			// ── Step 3: submit the purchase ──
 			try {
 				const payload = await requestJson('POST', '/purchase', {
 					package_id:       Number(pkgId),
@@ -665,15 +721,21 @@ function createArkShopInteractionHandler(options) {
 					specimen:         discordUser.specimen,
 				});
 
+				const deducted = payload.price_credits || pkgInfo.price_credits || 0;
+				if (deducted > 0) {
+					setBalance(interaction.user.id, userBalance - deducted);
+				}
+
 				await interaction.editReply({
 					embeds: [{
 						title: 'Purchase confirmed!',
 						description: 'Your order is queued. The bot will scan the cluster and deliver to the server where you are online.',
 						color: EMBED_COLOR_SUCCESS,
 						fields: [
-							{ name: 'Package',  value: String(payload.package_name || '—'), inline: true },
-							{ name: 'Price',    value: formatCredits(payload.price_credits || 0), inline: true },
-							{ name: 'Order ID', value: String(payload.order_id || '—'), inline: true },
+							{ name: 'Package',     value: String(payload.package_name || '—'),         inline: true },
+							{ name: 'Price',       value: formatCredits(deducted),                     inline: true },
+							{ name: 'Order ID',    value: String(payload.order_id || '—'),             inline: true },
+							{ name: 'New Balance', value: formatCredits(getBalance(interaction.user.id, 0)), inline: true },
 						],
 						footer: { text: 'DarkAbyss ARK Shop — only you can see this' },
 						timestamp: new Date().toISOString(),

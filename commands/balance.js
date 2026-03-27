@@ -9,61 +9,10 @@ function createBalanceCommandHandler(options) {
 	const defaultEmbedColor = 15859730;
 	const activeBlackjackGames = new Map();
 
-	const dataDir = path.join(__dirname, '..', 'data');
-	const balancesPath = path.join(dataDir, 'balances.json');
-
-	function ensureDataFiles() {
-		if (!fs.existsSync(dataDir)) {
-			fs.mkdirSync(dataDir, { recursive: true });
-		}
-
-		if (!fs.existsSync(balancesPath)) {
-			fs.writeFileSync(balancesPath, JSON.stringify({}, null, 2) + '\n', 'utf8');
-		}
-	}
-
-	function readBalances() {
-		ensureDataFiles();
-
-		try {
-			const raw = fs.readFileSync(balancesPath, 'utf8');
-			const parsed = JSON.parse(raw);
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				return parsed;
-			}
-		} catch (error) {
-			console.error('Failed to read balances.json, starting with empty balances:', error.message || error);
-		}
-
-		return {};
-	}
-
-	function writeBalances(balances) {
-		ensureDataFiles();
-		fs.writeFileSync(balancesPath, JSON.stringify(balances, null, 2) + '\n', 'utf8');
-	}
-
-	let balances = readBalances();
-
-	function normalizeAmount(value) {
-		return Math.round(value * 100) / 100;
-	}
+	const { balances, normalizeAmount, getBalance: storeGetBalance, setBalance } = require('./balanceStore');
 
 	function getBalance(userId) {
-		const existing = Number(balances[userId]);
-		if (Number.isFinite(existing) && existing >= 0) {
-			return normalizeAmount(existing);
-		}
-
-		balances[userId] = normalizeAmount(balanceStartingAmount);
-		writeBalances(balances);
-		return balances[userId];
-	}
-
-	function setBalance(userId, amount) {
-		balances[userId] = normalizeAmount(Math.max(0, amount));
-		writeBalances(balances);
-		return balances[userId];
+		return storeGetBalance(userId, balanceStartingAmount);
 	}
 
 	function parseAmount(raw) {
