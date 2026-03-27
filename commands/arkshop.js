@@ -111,11 +111,11 @@ function makeApiRequester(apiBaseUrl, apiToken) {
 
 // ─── Message builders ────────────────────────────────────────────────────────
 
-function buildCategoryMessage(categories) {
-	return buildCategoryPageMessage(categories, 0);
+function buildCategoryMessage(categories, ownerId) {
+	return buildCategoryPageMessage(categories, 0, ownerId);
 }
 
-function buildCategoryPageMessage(categories, page) {
+function buildCategoryPageMessage(categories, page, ownerId) {
 	const pageSize = 4;
 	const safePage = Math.max(0, Number.isInteger(page) ? page : 0);
 	const totalPages = Math.max(1, Math.ceil(categories.length / pageSize));
@@ -170,18 +170,18 @@ function buildCategoryPageMessage(categories, page) {
 				'\n\n' +
 				catLines.join('\n\n'),
 			color: EMBED_COLOR_DEFAULT,
-			footer: { text: 'DarkAbyss ARK Shop' },
+			footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
 			timestamp: new Date().toISOString(),
 		}],
 		components,
 	};
 }
 
-function buildPackageMessage(packages, catId, catName) {
-	return buildPackagePageMessage(packages, catId, catName, 0);
+function buildPackageMessage(packages, catId, catName, ownerId) {
+	return buildPackagePageMessage(packages, catId, catName, 0, ownerId);
 }
 
-function buildPackagePageMessage(packages, catId, catName, page) {
+function buildPackagePageMessage(packages, catId, catName, page, ownerId) {
 	const pageSize = 4;
 	const safePage = Math.max(0, Number.isInteger(page) ? page : 0);
 	const totalPages = Math.max(1, Math.ceil(packages.length / pageSize));
@@ -243,14 +243,14 @@ function buildPackagePageMessage(packages, catId, catName, page) {
 				'\n\n' +
 				pkgLines.join('\n\n'),
 			color: EMBED_COLOR_DEFAULT,
-			footer: { text: 'DarkAbyss ARK Shop' },
+			footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
 			timestamp: new Date().toISOString(),
 		}],
 		components: [selectRow, navRow],
 	};
 }
 
-function buildPackageDetailMessage(pkg, catId, catName, commandPrefix) {
+function buildPackageDetailMessage(pkg, catId, catName, commandPrefix, ownerId) {
 	const descLine = pkg.description ? pkg.description + '\n\n' : '';
 
 	return {
@@ -258,7 +258,7 @@ function buildPackageDetailMessage(pkg, catId, catName, commandPrefix) {
 			title: pkg.name,
 			description: descLine + '**Price:** ' + formatCredits(pkg.price_credits),
 			color: EMBED_COLOR_SUCCESS,
-			footer: { text: 'DarkAbyss ARK Shop' },
+			footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
 			timestamp: new Date().toISOString(),
 		}],
 		components: [
@@ -323,7 +323,7 @@ function createArkShopCommandHandler(options) {
 				}
 
 				await message.reply({
-					...buildCategoryMessage(categories),
+					...buildCategoryMessage(categories, message.author.id),
 					allowedMentions: { repliedUser: false },
 				});
 			} catch (err) {
@@ -517,6 +517,19 @@ function createArkShopInteractionHandler(options) {
 
 		const action = parts[1];
 
+		// ── Owner check: only the user who opened the shop can interact ──
+		const _footer = interaction.message?.embeds?.[0]?.footer?.text || '';
+		const _uidMatch = _footer.match(/uid:(\d+)/);
+		const ownerId = _uidMatch ? _uidMatch[1] : null;
+
+		if (ownerId && interaction.user.id !== ownerId) {
+			await interaction.reply({
+				content: '❌ Only the person who opened this shop can use these buttons.',
+				ephemeral: true,
+			});
+			return;
+		}
+
 		// ── Show categories page ──
 		if (action === 'cs') {
 			const page = Number.parseInt(parts[2] || '0', 10);
@@ -540,7 +553,7 @@ function createArkShopInteractionHandler(options) {
 					});
 					return;
 				}
-				await interaction.editReply(buildCategoryPageMessage(categories, Number.isFinite(page) ? page : 0));
+				await interaction.editReply(buildCategoryPageMessage(categories, Number.isFinite(page) ? page : 0, ownerId));
 			} catch (err) {
 				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
 			}
@@ -567,14 +580,14 @@ function createArkShopInteractionHandler(options) {
 							title: '📦 ' + catName,
 							description: '📭 No packages in this category.',
 							color: EMBED_COLOR_DEFAULT,
-							footer: { text: 'DarkAbyss ARK Shop' },
+							footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
 							timestamp: new Date().toISOString(),
 						}],
 						components: [
 							new MessageActionRow().addComponents(
 								new MessageButton()
 									.setCustomId('arkshop:cs:0')
-									.setLabel('← Back to Categories')
+									.setLabel('\u2190 Back to Categories')
 									.setStyle('SECONDARY')
 							),
 						],
@@ -582,7 +595,7 @@ function createArkShopInteractionHandler(options) {
 					return;
 				}
 
-				await interaction.editReply(buildPackagePageMessage(packages, String(catId), catName, 0));
+				await interaction.editReply(buildPackagePageMessage(packages, String(catId), catName, 0, ownerId));
 			} catch (err) {
 				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
 			}
@@ -610,7 +623,7 @@ function createArkShopInteractionHandler(options) {
 							title: '📦 ' + catName,
 							description: '📭 No packages in this category.',
 							color: EMBED_COLOR_DEFAULT,
-							footer: { text: 'DarkAbyss ARK Shop' },
+							footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
 							timestamp: new Date().toISOString(),
 						}],
 						components: [
@@ -625,7 +638,7 @@ function createArkShopInteractionHandler(options) {
 					return;
 				}
 
-				await interaction.editReply(buildPackagePageMessage(packages, String(catId), catName, Number.isFinite(page) ? page : 0));
+				await interaction.editReply(buildPackagePageMessage(packages, String(catId), catName, Number.isFinite(page) ? page : 0, ownerId));
 			} catch (err) {
 				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
 			}
@@ -640,7 +653,7 @@ function createArkShopInteractionHandler(options) {
 			try {
 				const pkg = await requestJson('GET', '/packages/' + pkgId);
 				const catName = pkg.category_name || 'Unknown Category';
-				await interaction.editReply(buildPackageDetailMessage(pkg, catId || String(pkg.category_id || ''), catName, commandPrefix));
+				await interaction.editReply(buildPackageDetailMessage(pkg, catId || String(pkg.category_id || ''), catName, commandPrefix, ownerId));
 			} catch (err) {
 				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
 			}
