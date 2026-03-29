@@ -5,6 +5,7 @@ const { Client, Intents } = require('discord.js');
 const { createBalanceCommandHandler } = require('./commands/balance');
 const { createLotteryCommandHandler } = require('./commands/lottery');
 const { createArkShopCommandHandler, createArkShopInteractionHandler } = require('./commands/arkshop');
+const { createServerStatusHandler } = require('./commands/serverStatus');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -20,6 +21,7 @@ const activityText = process.env.DISCORD_BOT_ACTIVITY_TEXT || 'darkabyss.nl';
 const commandPrefix = ((process.env.DISCORD_COMMAND_PREFIX || '&').trim() || '&');
 const discordShopApiUrl = (process.env.DISCORD_SHOP_API_URL || '').trim();
 const discordShopApiToken = (process.env.DISCORD_SHOP_API_TOKEN || '').trim();
+const statusChannelId = (process.env.STATUS_CHANNEL_ID || '').trim();
 
 const nitradoApiBaseUrl = (process.env.NITRADO_API_BASE_URL || 'https://api.nitrado.net').replace(/\/+$/, '');
 const pollSecondsValue = Number.parseInt(process.env.NITRADO_POLL_SECONDS || '120', 10);
@@ -95,6 +97,10 @@ const client = new Client({
 
 let lastPresenceText = '';
 let pollTimer = null;
+
+const serverStatusHandler = (statusChannelId && nitradoAccounts.length > 0)
+	? createServerStatusHandler({ client, channelId: statusChannelId, nitradoAccounts, nitradoApiBaseUrl })
+	: null;
 
 function setPresence(text) {
 	const nextText = (text || '').trim() || activityText;
@@ -238,11 +244,23 @@ client.once('ready', async () => {
 			setPresence(activityText);
 		}
 
+		if (serverStatusHandler) {
+			console.log('Server status embed enabled: channel ' + statusChannelId + ', updating every ' + nitradoPollSeconds + 's');
+			serverStatusHandler.update().catch((error) => {
+				console.error('Initial server status update failed:', error.message || error);
+			});
+		}
+
 		pollTimer = setInterval(() => {
 			updatePresenceFromNitrado().catch((error) => {
 				console.error('Nitrado poll cycle failed:', error.message || error);
 				setPresence(activityText);
 			});
+			if (serverStatusHandler) {
+				serverStatusHandler.update().catch((error) => {
+					console.error('Server status update failed:', error.message || error);
+				});
+			}
 		}, nitradoPollSeconds * 1000);
 	} else {
 		console.log('Nitrado polling disabled. Set NITRADO_1_API_TOKEN/NITRADO_1_SERVICE_IDS and NITRADO_2_API_TOKEN/NITRADO_2_SERVICE_IDS to enable it.');
