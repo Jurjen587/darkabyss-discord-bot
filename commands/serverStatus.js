@@ -1,6 +1,8 @@
 'use strict';
 
 const https = require('https');
+const fs    = require('fs');
+const path  = require('path');
 
 const COLOR_ONLINE  = 0x2ecc71; // green  — all servers up
 const COLOR_PARTIAL = 0xe67e22; // orange — some servers up
@@ -143,8 +145,29 @@ function buildStatusEmbed(results, updatedAt) {
 function createServerStatusHandler({ client, channelId, nitradoAccounts, nitradoApiBaseUrl }) {
 	if (!channelId) return null;
 
-	const base = (nitradoApiBaseUrl || 'https://api.nitrado.net').replace(/\/+$/, '');
-	let postedMessageId = null;
+	const base        = (nitradoApiBaseUrl || 'https://api.nitrado.net').replace(/\/+$/, '');
+	const stateFile   = path.join(__dirname, '..', 'data', 'server-status-state.json');
+
+	// Load persisted message ID from disk (survives bot restarts)
+	function loadState() {
+		try {
+			const raw = fs.readFileSync(stateFile, 'utf8');
+			return JSON.parse(raw);
+		} catch {
+			return {};
+		}
+	}
+
+	function saveState(state) {
+		try {
+			fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+			fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf8');
+		} catch (err) {
+			console.warn('[ServerStatus] Could not save state:', err.message);
+		}
+	}
+
+	let postedMessageId = loadState().messageId ?? null;
 
 	async function fetchAllServers() {
 		const results = [];
@@ -182,12 +205,15 @@ function createServerStatusHandler({ client, channelId, nitradoAccounts, nitrado
 				await existing.edit({ embeds: [embed] });
 				return;
 			}
+			// Message was deleted — clear the stored ID
 			postedMessageId = null;
+			saveState({});
 		}
 
 		// Post a fresh message if none exists
 		const msg = await channel.send({ embeds: [embed] });
 		postedMessageId = msg.id;
+		saveState({ messageId: msg.id });
 		console.log('[ServerStatus] Posted status embed (message ' + msg.id + ')');
 	}
 
