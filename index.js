@@ -6,6 +6,7 @@ const { createBalanceCommandHandler } = require('./commands/balance');
 const { createLotteryCommandHandler } = require('./commands/lottery');
 const { createArkShopCommandHandler, createArkShopInteractionHandler } = require('./commands/arkshop');
 const { createServerStatusHandler } = require('./commands/serverStatus');
+const { createRandomNumberCommandHandler } = require('./commands/randomNumber');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -53,6 +54,10 @@ const handleArkShopInteraction = createArkShopInteractionHandler({
 	commandPrefix,
 	apiBaseUrl: discordShopApiUrl,
 	apiToken: discordShopApiToken,
+});
+const handleRandomNumberCommand = createRandomNumberCommandHandler({
+	commandPrefix,
+	adminUserIds,
 });
 
 function parseServiceIds(rawServiceIds) {
@@ -285,6 +290,11 @@ client.on('messageCreate', (message) => {
 	handleArkShopCommand(message).catch((error) => {
 		console.error('Arkshop command failed:', error.message || error);
 		message.reply('Something went wrong while processing that arkshop command.').catch(() => {});
+	});
+
+	handleRandomNumberCommand(message).catch((error) => {
+		console.error('Random number command failed:', error.message || error);
+		message.reply('Something went wrong with the random number command.').catch(() => {});
 	});
 });
 
