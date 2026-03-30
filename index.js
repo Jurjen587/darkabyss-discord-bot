@@ -67,8 +67,18 @@ const handleRandomNumberCommand = createRandomNumberCommandHandler({
 });
 
 // --- Laravel API-backed feature handlers ---
-const laravelApiUrl = (process.env.LARAVEL_API_URL || discordShopApiUrl || '').trim();
+// LARAVEL_API_URL should be the base origin (e.g. http://localhost).
+// When falling back to DISCORD_SHOP_API_URL (which includes /api/discord/shop), strip the path.
 const laravelApiToken = (process.env.LARAVEL_API_TOKEN || discordShopApiToken || '').trim();
+let laravelApiUrl = (process.env.LARAVEL_API_URL || '').trim();
+if (!laravelApiUrl && discordShopApiUrl) {
+	try {
+		const parsed = new URL(discordShopApiUrl);
+		laravelApiUrl = parsed.origin;
+	} catch {
+		laravelApiUrl = discordShopApiUrl.replace(/\/api\/.*$/, '');
+	}
+}
 const api = createApiClient({ baseUrl: laravelApiUrl, apiToken: laravelApiToken });
 
 const serverManagementHandler = createServerManagementHandler({ commandPrefix, api, adminUserIds });
