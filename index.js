@@ -7,6 +7,12 @@ const { createLotteryCommandHandler } = require('./commands/lottery');
 const { createArkShopCommandHandler, createArkShopInteractionHandler } = require('./commands/arkshop');
 const { createServerStatusHandler } = require('./commands/serverStatus');
 const { createRandomNumberCommandHandler } = require('./commands/randomNumber');
+const { createApiClient } = require('./lib/apiClient');
+const { createCrossChatHandler } = require('./commands/crossChat');
+const { createServerManagementHandler } = require('./commands/serverManagement');
+const { createEconomyHandler } = require('./commands/economy');
+const { createTrackingHandler } = require('./commands/tracking');
+const { createModerationHandler } = require('./commands/moderation');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -59,6 +65,16 @@ const handleRandomNumberCommand = createRandomNumberCommandHandler({
 	commandPrefix,
 	adminUserIds,
 });
+
+// --- Laravel API-backed feature handlers ---
+const laravelApiUrl = (process.env.LARAVEL_API_URL || discordShopApiUrl || '').trim();
+const laravelApiToken = (process.env.LARAVEL_API_TOKEN || discordShopApiToken || '').trim();
+const api = createApiClient({ baseUrl: laravelApiUrl, apiToken: laravelApiToken });
+
+const serverManagementHandler = createServerManagementHandler({ commandPrefix, api, adminUserIds });
+const economyHandler = createEconomyHandler({ commandPrefix, api, adminUserIds });
+const trackingHandler = createTrackingHandler({ commandPrefix, api, adminUserIds });
+const moderationHandler = createModerationHandler({ commandPrefix, api, adminUserIds });
 
 function parseServiceIds(rawServiceIds) {
   return (rawServiceIds || '')
@@ -238,6 +254,20 @@ client.once('ready', async () => {
 	console.log('Command prefix: ' + commandPrefix);
 	setPresence(activityText);
 
+	// Start cross-chat relay if API is configured
+	if (api) {
+		const handler = createCrossChatHandler({ api, client });
+		if (handler) {
+			handler.start();
+			client.on('messageCreate', (msg) => {
+				handler.handleMessage(msg).catch(() => {});
+			});
+			console.log('Cross-chat relay started.');
+		}
+	} else {
+		console.log('Laravel API not configured. Set LARAVEL_API_URL and LARAVEL_API_TOKEN to enable new features.');
+	}
+
 	if (nitradoAccounts.length > 0) {
 		const totalServices = nitradoAccounts.reduce((sum, account) => sum + account.serviceIds.length, 0);
 		console.log('Nitrado player count polling enabled: ' + nitradoAccounts.length + ' account(s), ' + totalServices + ' service(s), every ' + nitradoPollSeconds + 's');
@@ -296,6 +326,32 @@ client.on('messageCreate', (message) => {
 		console.error('Random number command failed:', error.message || error);
 		message.reply('Something went wrong with the random number command.').catch(() => {});
 	});
+
+	// New API-backed command handlers
+	if (serverManagementHandler) {
+		serverManagementHandler(message).catch((error) => {
+			console.error('Server management command failed:', error.message || error);
+		});
+	}
+	if (economyHandler) {
+		economyHandler(message).catch((error) => {
+			console.error('Economy command failed:', error.message || error);
+		});
+	}
+	if (trackingHandler) {
+		trackingHandler.handleMessage(message).catch((error) => {
+			console.error('Tracking command failed:', error.message || error);
+		});
+		// XP tracking on every message (non-command)
+		trackingHandler.handleActivity(message).catch((error) => {
+			console.error('Activity tracking failed:', error.message || error);
+		});
+	}
+	if (moderationHandler) {
+		moderationHandler.handleMessage(message).catch((error) => {
+			console.error('Moderation command failed:', error.message || error);
+		});
+	}
 });
 
 client.on('interactionCreate', (interaction) => {
