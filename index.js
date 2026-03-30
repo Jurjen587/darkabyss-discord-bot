@@ -29,6 +29,7 @@ const commandPrefix = ((process.env.DISCORD_COMMAND_PREFIX || '&').trim() || '&'
 const discordShopApiUrl = (process.env.DISCORD_SHOP_API_URL || '').trim();
 const discordShopApiToken = (process.env.DISCORD_SHOP_API_TOKEN || '').trim();
 const statusChannelId = (process.env.STATUS_CHANNEL_ID || '').trim();
+const levelUpChannelId = (process.env.LEVEL_UP_CHANNEL_ID || '').trim();
 
 const nitradoApiBaseUrl = (process.env.NITRADO_API_BASE_URL || 'https://api.nitrado.net').replace(/\/+$/, '');
 const pollSecondsValue = Number.parseInt(process.env.NITRADO_POLL_SECONDS || '120', 10);
@@ -83,7 +84,7 @@ const api = createApiClient({ baseUrl: laravelApiUrl, apiToken: laravelApiToken 
 
 const serverManagementHandler = createServerManagementHandler({ commandPrefix, api, adminUserIds });
 const economyHandler = createEconomyHandler({ commandPrefix, api, adminUserIds });
-const trackingHandler = createTrackingHandler({ commandPrefix, api, adminUserIds });
+const trackingHandler = createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChannelId });
 const moderationHandler = createModerationHandler({ commandPrefix, api, adminUserIds });
 
 function parseServiceIds(rawServiceIds) {

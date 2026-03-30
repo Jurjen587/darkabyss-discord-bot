@@ -4,7 +4,7 @@ const EMBED_COLOR_STATS = 0x3498db;
 const EMBED_COLOR_KILL = 0xe74c3c;
 const EMBED_COLOR_LEVEL = 0x9b59b6;
 
-function createTrackingHandler({ commandPrefix, api, adminUserIds }) {
+function createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChannelId }) {
 	if (!api) return { handleMessage: async () => {}, handleActivity: async () => {} };
 
 	const prefix = commandPrefix || '&';
@@ -221,13 +221,16 @@ function createTrackingHandler({ commandPrefix, api, adminUserIds }) {
 		try {
 			const data = await api.recordActivity(message.author.id, message.author.tag);
 			if (data.leveled_up) {
-				await message.channel.send({
-					embeds: [{
-						color: EMBED_COLOR_LEVEL,
-						title: '🎉 Level Up!',
-						description: '**' + message.author.tag + '** reached **Level ' + data.level + '**!',
-					}],
-				}).catch(() => {});
+				const levelChannel = levelUpChannelId ? message.client.channels.cache.get(levelUpChannelId) : null;
+				if (levelChannel) {
+					await levelChannel.send({
+						embeds: [{
+							color: EMBED_COLOR_LEVEL,
+							title: '🎉 Level Up!',
+							description: '**' + message.author.tag + '** reached **Level ' + data.level + '**!',
+						}],
+					}).catch(() => {});
+				}
 			}
 		} catch {
 			// Silently ignore activity tracking errors
