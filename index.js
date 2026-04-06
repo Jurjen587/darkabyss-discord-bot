@@ -11,7 +11,7 @@ const { createApiClient } = require('./lib/apiClient');
 const { createCrossChatHandler } = require('./commands/crossChat');
 const { createServerManagementHandler } = require('./commands/serverManagement');
 const { createEconomyHandler } = require('./commands/economy');
-const { createTrackingHandler } = require('./commands/tracking');
+const { createTrackingHandler, recordJoin, backfillJoins } = require('./commands/tracking');
 const { createModerationHandler } = require('./commands/moderation');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -118,7 +118,7 @@ const activityTypeMap = {
 const activityType = activityTypeMap[activityTypeRaw] || 'PLAYING';
 
 const optionalMessageContentIntent = Intents.FLAGS.MESSAGE_CONTENT;
-const clientIntents = [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES];
+const clientIntents = [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES, Intents.FLAGS.GUILD_MEMBERS];
 if (enableMessageContentIntent && optionalMessageContentIntent) {
 	clientIntents.push(optionalMessageContentIntent);
 }
@@ -265,6 +265,16 @@ client.once('ready', async () => {
 	console.log('Command prefix: ' + commandPrefix);
 	setPresence(activityText);
 
+	// Backfill member join data from all guilds
+	for (const [, guild] of client.guilds.cache) {
+		guild.members.fetch().then((members) => {
+			const added = backfillJoins(members);
+			if (added > 0) console.log('Backfilled ' + added + ' member joins from ' + guild.name);
+		}).catch((err) => {
+			console.error('Failed to backfill members from ' + guild.name + ':', err.message || err);
+		});
+	}
+
 	// Start cross-chat relay if API is configured
 	if (api) {
 		const handler = createCrossChatHandler({ api, client });
@@ -369,6 +379,11 @@ client.on('interactionCreate', (interaction) => {
 	handleArkShopInteraction(interaction).catch((error) => {
 		console.error('Arkshop interaction failed:', error.message || error);
 	});
+});
+
+client.on('guildMemberAdd', (member) => {
+	if (member.user.bot) return;
+	recordJoin(member.user.id, member.user.tag, member.joinedTimestamp || Date.now());
 });
 
 client.on('error', (error) => {

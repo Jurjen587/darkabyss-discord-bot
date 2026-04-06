@@ -1,12 +1,54 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const EMBED_COLOR_STATS = 0x3498db;
 const EMBED_COLOR_KILL = 0xe74c3c;
 const EMBED_COLOR_LEVEL = 0x9b59b6;
+const EMBED_COLOR_JOIN = 0x2ecc71;
+
+const JOINS_FILE = path.join(__dirname, '..', 'data', 'memberJoins.json');
+
+function loadJoins() {
+	try {
+		return JSON.parse(fs.readFileSync(JOINS_FILE, 'utf8'));
+	} catch {
+		return { joins: [] };
+	}
+}
+
+function saveJoins(data) {
+	fs.writeFileSync(JOINS_FILE, JSON.stringify(data, null, 2));
+}
+
+function recordJoin(userId, username, timestamp) {
+	const data = loadJoins();
+	const exists = data.joins.some(j => j.userId === userId && j.timestamp === timestamp);
+	if (!exists) {
+		data.joins.push({ userId, username, timestamp });
+		saveJoins(data);
+	}
+}
+
+function backfillJoins(members) {
+	const data = loadJoins();
+	const existing = new Set(data.joins.map(j => j.userId + ':' + j.timestamp));
+	let added = 0;
+	for (const [, member] of members) {
+		if (member.user.bot || !member.joinedTimestamp) continue;
+		const key = member.user.id + ':' + member.joinedTimestamp;
+		if (!existing.has(key)) {
+			data.joins.push({ userId: member.user.id, username: member.user.tag, timestamp: member.joinedTimestamp });
+			existing.add(key);
+			added++;
+		}
+	}
+	if (added > 0) saveJoins(data);
+	return added;
+}
 
 function createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChannelId }) {
-	if (!api) return { handleMessage: async () => {}, handleActivity: async () => {} };
-
 	const prefix = commandPrefix || '&';
 
 	async function handleMessage(message) {
@@ -17,6 +59,56 @@ function createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChanne
 		const args = content.slice(prefix.length).trim().split(/\s+/);
 		const cmd = (args.shift() || '').toLowerCase();
 		const isAdmin = adminUserIds.has(message.author.id) || message.member?.permissions?.has('ADMINISTRATOR');
+
+		// &joins (admin only) – works without API
+		if (cmd === 'joins' && isAdmin) {
+			const data = loadJoins();
+			const now = Date.now();
+			const DAY = 86400000;
+
+			const todayStart = new Date();
+			todayStart.setHours(0, 0, 0, 0);
+
+			const todayJoins = data.joins.filter(j => j.timestamp >= todayStart.getTime()).length;
+			const weekJoins = data.joins.filter(j => j.timestamp >= now - 7 * DAY).length;
+			const monthJoins = data.joins.filter(j => j.timestamp >= now - 30 * DAY).length;
+
+			// Build weekly bar chart for last 13 weeks (~3 months)
+			const WEEKS = 13;
+			const buckets = [];
+			for (let i = WEEKS - 1; i >= 0; i--) {
+				const weekEnd = now - i * 7 * DAY;
+				const weekStart = weekEnd - 7 * DAY;
+				const count = data.joins.filter(j => j.timestamp >= weekStart && j.timestamp < weekEnd).length;
+				const label = new Date(weekStart).toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+				buckets.push({ label, count });
+			}
+
+			const maxCount = Math.max(...buckets.map(b => b.count), 1);
+			const BAR_WIDTH = 14;
+			const chartLines = buckets.map(b => {
+				const filled = Math.round((b.count / maxCount) * BAR_WIDTH);
+				const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+				return '`' + b.label.padStart(6) + '` ' + bar + ' **' + b.count + '**';
+			});
+
+			await message.reply({ embeds: [{
+				color: EMBED_COLOR_JOIN,
+				title: '📈 Member Join Tracker',
+				fields: [
+					{ name: '📅 Today', value: String(todayJoins), inline: true },
+					{ name: '📅 Last 7 Days', value: String(weekJoins), inline: true },
+					{ name: '📅 Last 30 Days', value: String(monthJoins), inline: true },
+					{ name: '📊 Weekly Joins (Last 3 Months)', value: chartLines.join('\n') || 'No data yet.' },
+				],
+				timestamp: new Date().toISOString(),
+				footer: { text: 'Total tracked joins: ' + data.joins.length },
+			}] });
+			return;
+		}
+
+		// All commands below require the Laravel API
+		if (!api) return;
 
 		// &stats <eosId>
 		if (cmd === 'stats') {
@@ -215,6 +307,7 @@ function createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChanne
 
 	// XP tracking on every message (non-command)
 	async function handleActivity(message) {
+		if (!api) return;
 		if (!message || !message.author || message.author.bot) return;
 		if (message.content.startsWith(prefix)) return; // Don't gain XP from commands
 
@@ -245,4 +338,4 @@ function createProgressBar(current, total) {
 	return '▓'.repeat(filled) + '░'.repeat(10 - filled);
 }
 
-module.exports = { createTrackingHandler };
+module.exports = { createTrackingHandler, recordJoin, backfillJoins };
