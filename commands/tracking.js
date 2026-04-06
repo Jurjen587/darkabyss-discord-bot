@@ -95,7 +95,7 @@ function createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChanne
 			for (let c = 0; c < cols; c++) {
 				grid[rows[c]][c] = '\u25CF'; // dot
 				// Connect to next point with vertical segments
-				if (c < cols - 1) {
+				if (c < cols - 1 && rows[c] !== rows[c + 1]) {
 					const from = rows[c];
 					const to = rows[c + 1];
 					const step = from < to ? 1 : -1;
