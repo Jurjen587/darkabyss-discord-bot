@@ -73,57 +73,44 @@ function createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChanne
 			const weekJoins = data.joins.filter(j => j.timestamp >= now - 7 * DAY).length;
 			const monthJoins = data.joins.filter(j => j.timestamp >= now - 30 * DAY).length;
 
-			// Build weekly line graph for last 13 weeks (~3 months)
+			// Build weekly data for last 13 weeks (~3 months)
 			const WEEKS = 13;
-			const buckets = [];
+			const labels = [];
+			const counts = [];
 			for (let i = WEEKS - 1; i >= 0; i--) {
 				const weekEnd = now - i * 7 * DAY;
 				const weekStart = weekEnd - 7 * DAY;
 				const count = data.joins.filter(j => j.timestamp >= weekStart && j.timestamp < weekEnd).length;
 				const label = new Date(weekStart).toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
-				buckets.push({ label, count });
+				labels.push(label);
+				counts.push(count);
 			}
 
-			const maxCount = Math.max(...buckets.map(b => b.count), 1);
-			const GRAPH_HEIGHT = 8;
-			const cols = buckets.length;
-
-			// Build a grid, plot points, connect with lines
-			const grid = Array.from({ length: GRAPH_HEIGHT }, () => Array(cols).fill(' '));
-			const rows = buckets.map(b => GRAPH_HEIGHT - 1 - Math.round((b.count / maxCount) * (GRAPH_HEIGHT - 1)));
-
-			for (let c = 0; c < cols; c++) {
-				grid[rows[c]][c] = '\u25CF'; // dot
-				// Connect to next point with vertical segments
-				if (c < cols - 1 && rows[c] !== rows[c + 1]) {
-					const from = rows[c];
-					const to = rows[c + 1];
-					const step = from < to ? 1 : -1;
-					for (let r = from + step; r !== to; r += step) {
-						if (grid[r][c] === ' ') grid[r][c] = '\u2502';
-					}
-				}
-			}
-
-			// Y-axis labels + grid rows
-			const graphLines = [];
-			for (let r = 0; r < GRAPH_HEIGHT; r++) {
-				const yVal = Math.round(maxCount * (GRAPH_HEIGHT - 1 - r) / (GRAPH_HEIGHT - 1));
-				const yLabel = String(yVal).padStart(4);
-				graphLines.push(yLabel + ' \u2502' + grid[r].join('\u2500'));
-			}
-			// X-axis
-			graphLines.push('     \u2514' + '\u2500'.repeat(cols));
-			// Labels: show first, middle, last
-			const mid = Math.floor(cols / 2);
-			const xLabels = ' '.repeat(5) + buckets[0].label
-				+ ' '.repeat(Math.max(1, mid - buckets[0].label.length))
-				+ buckets[mid].label
-				+ ' '.repeat(Math.max(1, cols - mid - buckets[mid].label.length))
-				+ buckets[cols - 1].label;
-			graphLines.push(xLabels);
-
-			const chart = '```\n' + graphLines.join('\n') + '\n```';
+			// Generate chart image via QuickChart.io
+			const chartConfig = {
+				type: 'line',
+				data: {
+					labels: labels,
+					datasets: [{
+						label: 'Joins',
+						data: counts,
+						borderColor: '#2ecc71',
+						backgroundColor: 'rgba(46,204,113,0.15)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 4,
+						pointBackgroundColor: '#2ecc71',
+					}],
+				},
+				options: {
+					legend: { display: false },
+					scales: {
+						yAxes: [{ ticks: { beginAtZero: true, fontColor: '#dcddde', precision: 0 }, gridLines: { color: 'rgba(255,255,255,0.1)' } }],
+						xAxes: [{ ticks: { fontColor: '#dcddde' }, gridLines: { color: 'rgba(255,255,255,0.1)' } }],
+					},
+				},
+			};
+			const chartUrl = 'https://quickchart.io/chart?c=' + encodeURIComponent(JSON.stringify(chartConfig)) + '&w=600&h=300&bkg=%232f3136';
 
 			await message.reply({ embeds: [{
 				color: EMBED_COLOR_JOIN,
@@ -132,8 +119,8 @@ function createTrackingHandler({ commandPrefix, api, adminUserIds, levelUpChanne
 					{ name: 'Today', value: String(todayJoins), inline: true },
 					{ name: 'Last 7 Days', value: String(weekJoins), inline: true },
 					{ name: 'Last 30 Days', value: String(monthJoins), inline: true },
-					{ name: 'Weekly Joins (Last 3 Months)', value: chart || 'No data yet.' },
 				],
+				image: { url: chartUrl },
 				timestamp: new Date().toISOString(),
 				footer: { text: 'Total tracked joins: ' + data.joins.length },
 			}] });
