@@ -282,10 +282,13 @@ function buildPackageDetailMessage(pkg, catId, catName, commandPrefix, ownerId) 
 
 // ─── Command handler (prefix messages) ───────────────────────────────────────
 
+let shopEnabled = true;
+
 function createArkShopCommandHandler(options) {
 	const commandPrefix = options.commandPrefix;
 	const apiBaseUrl    = (options.apiBaseUrl || '').replace(/\/+$/, '');
 	const apiToken      = options.apiToken || '';
+	const adminUserIds  = options.adminUserIds || new Set();
 	const requestJson   = makeApiRequester(apiBaseUrl, apiToken);
 
 	return async function handleArkShopCommand(message) {
@@ -305,6 +308,34 @@ function createArkShopCommandHandler(options) {
 		}
 
 		const sub = (parts[1] || '').toLowerCase();
+
+		// ── Enable / Disable (admin only) ──
+		if (sub === 'enable' || sub === 'disable') {
+			if (!adminUserIds.has(message.author.id)) {
+				await message.reply({
+					content: '❌ You do not have permission to use this command.',
+					allowedMentions: { repliedUser: false },
+				});
+				return;
+			}
+			shopEnabled = sub === 'enable';
+			await message.reply({
+				content: shopEnabled
+					? '✅ The ARK Shop has been **enabled**.'
+					: '🔒 The ARK Shop has been **disabled**.',
+				allowedMentions: { repliedUser: false },
+			});
+			return;
+		}
+
+		// ── Shop disabled guard ──
+		if (!shopEnabled) {
+			await message.reply({
+				content: '🔒 The ARK Shop is currently disabled. Please try again later.',
+				allowedMentions: { repliedUser: false },
+			});
+			return;
+		}
 
 		// ── Open shop: show category buttons ──
 		if (!sub || sub === 'shop') {
@@ -481,16 +512,20 @@ function createArkShopCommandHandler(options) {
 		}
 
 		// ── Help fallback ──
+		const helpLines = [
+			'`' + commandPrefix + 'arkshop` — Browse the shop',
+			'`' + commandPrefix + 'arkshop set eosid <EOS_ID>` — Save your EOS ID',
+			'`' + commandPrefix + 'arkshop set specimen <NAME>` — Save your character name',
+			'',
+			'Once your EOS ID and specimen are saved, press **🛒 Buy Now** on any package to purchase instantly.',
+		];
+		if (adminUserIds.has(message.author.id)) {
+			helpLines.push('', '**Admin:**', '`' + commandPrefix + 'arkshop enable` — Enable the shop', '`' + commandPrefix + 'arkshop disable` — Disable the shop');
+		}
 		await message.reply({
 			embeds: [{
 				title: '🛒 ARK Shop — Help',
-				description: [
-					'`' + commandPrefix + 'arkshop` — Browse the shop',
-					'`' + commandPrefix + 'arkshop set eosid <EOS_ID>` — Save your EOS ID',
-					'`' + commandPrefix + 'arkshop set specimen <NAME>` — Save your character name',
-					'',
-					'Once your EOS ID and specimen are saved, press **🛒 Buy Now** on any package to purchase instantly.',
-				].join('\n'),
+				description: helpLines.join('\n'),
 				color: EMBED_COLOR_DEFAULT,
 				footer: { text: 'DarkAbyss ARK Shop' },
 				timestamp: new Date().toISOString(),
@@ -514,6 +549,14 @@ function createArkShopInteractionHandler(options) {
 		// customId format: arkshop:<action>:<...params>
 		const parts  = interaction.customId.split(':');
 		if (parts[0] !== 'arkshop') return;
+
+		if (!shopEnabled) {
+			await interaction.reply({
+				content: '🔒 The ARK Shop is currently disabled. Please try again later.',
+				ephemeral: true,
+			});
+			return;
+		}
 
 		const action = parts[1];
 

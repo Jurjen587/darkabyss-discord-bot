@@ -56,11 +56,13 @@ const handleArkShopCommand = createArkShopCommandHandler({
 	commandPrefix,
 	apiBaseUrl: discordShopApiUrl,
 	apiToken: discordShopApiToken,
+	adminUserIds,
 });
 const handleArkShopInteraction = createArkShopInteractionHandler({
 	commandPrefix,
 	apiBaseUrl: discordShopApiUrl,
 	apiToken: discordShopApiToken,
+	adminUserIds,
 });
 const handleRandomNumberCommand = createRandomNumberCommandHandler({
 	commandPrefix,
