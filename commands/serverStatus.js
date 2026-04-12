@@ -138,7 +138,7 @@ function buildStatusEmbed(results, updatedAt) {
 		description,
 		color,
 		footer: {
-			text: (onlineCount + 5) + ' / ' + total + ' server' + (total !== 1 ? 's' : '') + ' online',
+			text: onlineCount + ' / ' + total + ' server' + (total !== 1 ? 's' : '') + ' online',
 		},
 		timestamp: new Date(updatedAt).toISOString(),
 	};
