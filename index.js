@@ -321,6 +321,9 @@ function getPlayerEosId(player) {
 }
 
 function getMapName(player) {
+	// ARK maps - check these first for exact matches
+	const knownMaps = ['TheIsland', 'Ragnarok', 'Extinction', 'Aberration', 'Valguero', 'Genesis', 'CrystalIsles', 'Lost Island', 'Fjordur', 'ScorchedEarth'];
+	
 	const candidates = [
 		player?.map_name,
 		player?.map,
@@ -331,8 +334,18 @@ function getMapName(player) {
 	for (const value of candidates) {
 		if (typeof value === 'string' && value.trim() !== '') {
 			const name = value.trim();
-			// Extract just the map name (e.g., "TheIsland" from "TheIsland-PvP" or similar)
-			return name.split('-')[0] || name;
+			
+			// Check if it's a known map name
+			for (const knownMap of knownMaps) {
+				if (name.includes(knownMap)) {
+					return knownMap;
+				}
+			}
+			
+			// If not a known map, extract before first hyphen or space (but not if it looks like a server name)
+			if (name.length < 30 && !name.toLowerCase().includes('server') && !name.toLowerCase().includes('dark')) {
+				return name.split('-')[0] || name;
+			}
 		}
 	}
 
