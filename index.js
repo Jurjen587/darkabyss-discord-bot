@@ -143,6 +143,7 @@ const dupeState = {
 	previousOnlineKeys: new Set(),
 	joinHistoryByPlayer: new Map(),
 	lastAlertByPlayer: new Map(),
+	lastPlayerListMessageId: null,
 	initialized: false,
 };
 
@@ -304,6 +305,7 @@ function getPlayerEosId(player) {
 		player?.eosId,
 		player?.player_id,
 		player?.steam_id,
+		player?.id,
 	];
 
 	for (const value of candidates) {
@@ -312,6 +314,25 @@ function getPlayerEosId(player) {
 		}
 		if (typeof value === 'number' && Number.isFinite(value)) {
 			return String(value);
+		}
+	}
+
+	return 'N/A';
+}
+
+function getMapName(player) {
+	const candidates = [
+		player?.map_name,
+		player?.map,
+		player?.server_name,
+		player?.server,
+	];
+
+	for (const value of candidates) {
+		if (typeof value === 'string' && value.trim() !== '') {
+			const name = value.trim();
+			// Extract just the map name (e.g., "TheIsland" from "TheIsland-PvP" or similar)
+			return name.split('-')[0] || name;
 		}
 	}
 
@@ -362,60 +383,42 @@ async function sendPlayerList(players) {
 			return;
 		}
 
-		const playerLines = players.map((player) => {
-			const name = getPlayerDisplayName(player);
-			const eosId = getPlayerEosId(player);
-			const server = getPlayerServerName(player);
-			return '• **' + name + '** - EOS ID: `' + eosId + '` (Server: **' + server + '**)';
-		});
-
-		if (playerLines.length === 0) {
-			await channel.send({
-				embeds: [{
-					color: 0x3498db,
-					title: 'Online Players List',
-					description: 'No players currently online.',
-					timestamp: new Date().toISOString(),
-				}],
+		let description = '';
+		
+		if (players.length === 0) {
+			description = 'No players currently online.';
+		} else {
+			const playerLines = players.map((player) => {
+				const name = getPlayerDisplayName(player);
+				const eosId = getPlayerEosId(player);
+				const mapName = getMapName(player);
+				return name + ' | `' + eosId + '` | ' + mapName;
 			});
-			return;
+			
+			description = playerLines.join('\n');
 		}
 
-		// Discord message limit is 2000 characters. Split into chunks if needed.
-		const chunks = [];
-		let currentChunk = '';
+		const embed = {
+			color: 0x3498db,
+			title: 'Online Players (' + players.length + ')',
+			description: description,
+			timestamp: new Date().toISOString(),
+			footer: { text: 'Updated every ' + dupePollSeconds + ' seconds' },
+		};
 
-		for (const line of playerLines) {
-			if ((currentChunk + line + '\n').length > 1900) {
-				if (currentChunk) {
-					chunks.push(currentChunk.trim());
-				}
-				currentChunk = line + '\n';
-			} else {
-				currentChunk += line + '\n';
+		// Try to edit existing message, or send a new one if it doesn't exist
+		if (dupeState.lastPlayerListMessageId) {
+			try {
+				const message = await channel.messages.fetch(dupeState.lastPlayerListMessageId);
+				await message.edit({ embeds: [embed] });
+			} catch (error) {
+				// Message not found, send a new one
+				const sentMessage = await channel.send({ embeds: [embed] });
+				dupeState.lastPlayerListMessageId = sentMessage.id;
 			}
-		}
-
-		if (currentChunk) {
-			chunks.push(currentChunk.trim());
-		}
-
-		for (let i = 0; i < chunks.length; i++) {
-			const isFirst = i === 0;
-			const embed = {
-				color: 0x3498db,
-				title: isFirst ? 'Online Players List (' + playerLines.length + ' total)' : 'Online Players List (continued)',
-				description: chunks[i],
-				timestamp: new Date().toISOString(),
-			};
-
-			if (isFirst) {
-				embed.footer = { text: 'Updated every ' + dupePollSeconds + ' seconds' };
-			}
-
-			await channel.send({
-				embeds: [embed],
-			});
+		} else {
+			const sentMessage = await channel.send({ embeds: [embed] });
+			dupeState.lastPlayerListMessageId = sentMessage.id;
 		}
 	} catch (error) {
 		console.error('Failed to send player list:', error.message || error);
