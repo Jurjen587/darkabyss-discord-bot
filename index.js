@@ -31,6 +31,7 @@ const discordShopApiToken = (process.env.DISCORD_SHOP_API_TOKEN || '').trim();
 const statusChannelId = (process.env.STATUS_CHANNEL_ID || '').trim();
 const levelUpChannelId = (process.env.LEVEL_UP_CHANNEL_ID || '').trim();
 const dupeAlertChannelId = (process.env.DUPE_ALERT_CHANNEL_ID || '1501520067215622174').trim();
+const dupePlayerListChannelId = (process.env.DUPE_PLAYER_LIST_CHANNEL_ID || '1501656478719934595').trim();
 const dupePollSeconds = 10;
 const dupeJoinWindowMs = 10 * 60 * 1000;
 const dupeJoinThreshold = 3;
@@ -297,6 +298,26 @@ function getPlayerServerName(player) {
 	return 'Unknown server';
 }
 
+function getPlayerEosId(player) {
+	const candidates = [
+		player?.eos_id,
+		player?.eosId,
+		player?.player_id,
+		player?.steam_id,
+	];
+
+	for (const value of candidates) {
+		if (typeof value === 'string' && value.trim() !== '') {
+			return value.trim();
+		}
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			return String(value);
+		}
+	}
+
+	return 'Unknown';
+}
+
 async function sendDupeAlert(alertData) {
 	if (!dupeAlertChannelId) {
 		return;
@@ -326,6 +347,78 @@ async function sendDupeAlert(alertData) {
 		});
 	} catch (error) {
 		console.error('Failed to send dupe alert:', error.message || error);
+	}
+}
+
+async function sendPlayerList(players) {
+	if (!dupePlayerListChannelId) {
+		return;
+	}
+
+	try {
+		const channel = await client.channels.fetch(dupePlayerListChannelId);
+		if (!channel || typeof channel.send !== 'function') {
+			console.error('Dupe player list channel is not a text channel: ' + dupePlayerListChannelId);
+			return;
+		}
+
+		const playerLines = players.map((player) => {
+			const name = getPlayerDisplayName(player);
+			const eosId = getPlayerEosId(player);
+			const server = getPlayerServerName(player);
+			return '• **' + name + '** - EOS ID: `' + eosId + '` (Server: **' + server + '**)';
+		});
+
+		if (playerLines.length === 0) {
+			await channel.send({
+				embeds: [{
+					color: 0x3498db,
+					title: 'Online Players List',
+					description: 'No players currently online.',
+					timestamp: new Date().toISOString(),
+				}],
+			});
+			return;
+		}
+
+		// Discord message limit is 2000 characters. Split into chunks if needed.
+		const chunks = [];
+		let currentChunk = '';
+
+		for (const line of playerLines) {
+			if ((currentChunk + line + '\n').length > 1900) {
+				if (currentChunk) {
+					chunks.push(currentChunk.trim());
+				}
+				currentChunk = line + '\n';
+			} else {
+				currentChunk += line + '\n';
+			}
+		}
+
+		if (currentChunk) {
+			chunks.push(currentChunk.trim());
+		}
+
+		for (let i = 0; i < chunks.length; i++) {
+			const isFirst = i === 0;
+			const embed = {
+				color: 0x3498db,
+				title: isFirst ? 'Online Players List (' + playerLines.length + ' total)' : 'Online Players List (continued)',
+				description: chunks[i],
+				timestamp: new Date().toISOString(),
+			};
+
+			if (isFirst) {
+				embed.footer = { text: 'Updated every ' + dupePollSeconds + ' seconds' };
+			}
+
+			await channel.send({
+				embeds: [embed],
+			});
+		}
+	} catch (error) {
+		console.error('Failed to send player list:', error.message || error);
 	}
 }
 
@@ -384,6 +477,9 @@ async function pollDupeDetector() {
 	}
 
 	dupeState.previousOnlineKeys = currentOnlineKeys;
+
+	// Send player list to designated channel
+	await sendPlayerList(players);
 }
 
 async function fetchNitradoPlayerCount(tokenValue, serviceId) {
@@ -491,7 +587,7 @@ client.once('ready', async () => {
 	}
 
 	if (api) {
-		console.log('Dupe detector enabled: polling online players every ' + dupePollSeconds + 's, alerts to channel ' + dupeAlertChannelId);
+		console.log('Dupe detector enabled: polling online players every ' + dupePollSeconds + 's, alerts to channel ' + dupeAlertChannelId + ', player list to channel ' + dupePlayerListChannelId);
 		pollDupeDetector().catch((error) => {
 			console.error('Initial dupe detector poll failed:', error.message || error);
 		});
