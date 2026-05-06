@@ -30,6 +30,11 @@ const discordShopApiUrl = (process.env.DISCORD_SHOP_API_URL || '').trim();
 const discordShopApiToken = (process.env.DISCORD_SHOP_API_TOKEN || '').trim();
 const statusChannelId = (process.env.STATUS_CHANNEL_ID || '').trim();
 const levelUpChannelId = (process.env.LEVEL_UP_CHANNEL_ID || '').trim();
+const dupeAlertChannelId = (process.env.DUPE_ALERT_CHANNEL_ID || '1501520067215622174').trim();
+const dupePollSeconds = 10;
+const dupeJoinWindowMs = 10 * 60 * 1000;
+const dupeJoinThreshold = 3;
+const dupeAlertCooldownMs = 5 * 60 * 1000;
 
 const nitradoApiBaseUrl = (process.env.NITRADO_API_BASE_URL || 'https://api.nitrado.net').replace(/\/+$/, '');
 const pollSecondsValue = Number.parseInt(process.env.NITRADO_POLL_SECONDS || '120', 10);
@@ -131,6 +136,14 @@ const client = new Client({
 
 let lastPresenceText = '';
 let pollTimer = null;
+let dupePollTimer = null;
+
+const dupeState = {
+	previousOnlineKeys: new Set(),
+	joinHistoryByPlayer: new Map(),
+	lastAlertByPlayer: new Map(),
+	initialized: false,
+};
 
 const serverStatusHandler = (statusChannelId && nitradoAccounts.length > 0)
 	? createServerStatusHandler({ client, channelId: statusChannelId, nitradoAccounts, nitradoApiBaseUrl })
@@ -218,6 +231,159 @@ function extractPlayerCount(payload) {
 	}
 
 	return null;
+}
+
+function trimRecentTimestamps(timestamps, nowMs) {
+	if (!Array.isArray(timestamps) || timestamps.length === 0) {
+		return [];
+	}
+
+	return timestamps.filter((value) => Number.isFinite(value) && nowMs - value <= dupeJoinWindowMs);
+}
+
+function getPlayerKey(player) {
+	const candidates = [
+		player?.eos_id,
+		player?.player_id,
+		player?.eosId,
+		player?.steam_id,
+		player?.id,
+		player?.name,
+	];
+
+	for (const value of candidates) {
+		if (typeof value === 'string' && value.trim() !== '') {
+			return value.trim().toLowerCase();
+		}
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			return String(value);
+		}
+	}
+
+	return null;
+}
+
+function getPlayerDisplayName(player) {
+	const candidates = [
+		player?.name,
+		player?.player_name,
+		player?.character_name,
+		player?.eos_id,
+		player?.player_id,
+	];
+
+	for (const value of candidates) {
+		if (typeof value === 'string' && value.trim() !== '') {
+			return value.trim();
+		}
+	}
+
+	return 'Unknown player';
+}
+
+function getPlayerServerName(player) {
+	const candidates = [
+		player?.server_name,
+		player?.server,
+		player?.map_name,
+	];
+
+	for (const value of candidates) {
+		if (typeof value === 'string' && value.trim() !== '') {
+			return value.trim();
+		}
+	}
+
+	return 'Unknown server';
+}
+
+async function sendDupeAlert(alertData) {
+	if (!dupeAlertChannelId) {
+		return;
+	}
+
+	try {
+		const channel = await client.channels.fetch(dupeAlertChannelId);
+		if (!channel || typeof channel.send !== 'function') {
+			console.error('Dupe alert channel is not a text channel: ' + dupeAlertChannelId);
+			return;
+		}
+
+		const description = [
+			'Player **' + alertData.name + '** has rejoined **' + alertData.joinCount + '** times in the last **10 minutes**.',
+			'Server: **' + alertData.serverName + '**',
+			'Player ID: `' + alertData.playerKey + '`',
+			'Latest rejoin: <t:' + Math.floor(alertData.lastJoinMs / 1000) + ':R>',
+		].join('\n');
+
+		await channel.send({
+			embeds: [{
+				color: 0xe74c3c,
+				title: 'Dupe Detector Alert',
+				description,
+				timestamp: new Date(alertData.lastJoinMs).toISOString(),
+			}],
+		});
+	} catch (error) {
+		console.error('Failed to send dupe alert:', error.message || error);
+	}
+}
+
+async function pollDupeDetector() {
+	if (!api) {
+		return;
+	}
+
+	const nowMs = Date.now();
+	const response = await api.listAllPlayers(null);
+	const players = Array.isArray(response?.players) ? response.players : [];
+
+	const onlineByKey = new Map();
+	for (const player of players) {
+		const key = getPlayerKey(player);
+		if (!key || onlineByKey.has(key)) {
+			continue;
+		}
+		onlineByKey.set(key, player);
+	}
+
+	const currentOnlineKeys = new Set(onlineByKey.keys());
+
+	if (!dupeState.initialized) {
+		dupeState.previousOnlineKeys = currentOnlineKeys;
+		dupeState.initialized = true;
+		return;
+	}
+
+	for (const [playerKey, player] of onlineByKey) {
+		if (dupeState.previousOnlineKeys.has(playerKey)) {
+			continue;
+		}
+
+		const history = trimRecentTimestamps(dupeState.joinHistoryByPlayer.get(playerKey), nowMs);
+		history.push(nowMs);
+		dupeState.joinHistoryByPlayer.set(playerKey, history);
+
+		if (history.length < dupeJoinThreshold) {
+			continue;
+		}
+
+		const lastAlertMs = dupeState.lastAlertByPlayer.get(playerKey) || 0;
+		if (nowMs - lastAlertMs < dupeAlertCooldownMs) {
+			continue;
+		}
+
+		dupeState.lastAlertByPlayer.set(playerKey, nowMs);
+		await sendDupeAlert({
+			playerKey,
+			name: getPlayerDisplayName(player),
+			serverName: getPlayerServerName(player),
+			joinCount: history.length,
+			lastJoinMs: nowMs,
+		});
+	}
+
+	dupeState.previousOnlineKeys = currentOnlineKeys;
 }
 
 async function fetchNitradoPlayerCount(tokenValue, serviceId) {
@@ -323,6 +489,21 @@ client.once('ready', async () => {
 	} else {
 		console.log('Nitrado polling disabled. Set NITRADO_1_API_TOKEN/NITRADO_1_SERVICE_IDS and NITRADO_2_API_TOKEN/NITRADO_2_SERVICE_IDS to enable it.');
 	}
+
+	if (api) {
+		console.log('Dupe detector enabled: polling online players every ' + dupePollSeconds + 's, alerts to channel ' + dupeAlertChannelId);
+		pollDupeDetector().catch((error) => {
+			console.error('Initial dupe detector poll failed:', error.message || error);
+		});
+
+		dupePollTimer = setInterval(() => {
+			pollDupeDetector().catch((error) => {
+				console.error('Dupe detector poll failed:', error.message || error);
+			});
+		}, dupePollSeconds * 1000);
+	} else {
+		console.log('Dupe detector disabled because Laravel API is not configured.');
+	}
 });
 
 client.on('messageCreate', (message) => {
@@ -400,6 +581,9 @@ process.on('SIGINT', async () => {
 	console.log('Shutting down Discord bot...');
 	if (pollTimer) {
 		clearInterval(pollTimer);
+	}
+	if (dupePollTimer) {
+		clearInterval(dupePollTimer);
 	}
 	await client.destroy();
 	process.exit(0);
