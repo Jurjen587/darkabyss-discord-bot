@@ -108,9 +108,8 @@ function buildStatusEmbed(results, updatedAt) {
 			lines.push('🔴  **' + info.name + '**');
 			lines.push('> Server is offline');
 		} else {
-			const boost = [4, 6][Math.floor(Math.random() * 2)];
 			const displayPlayers = info.playerCurrent !== null
-				? info.playerCurrent + boost
+				? info.playerCurrent
 				: null;
 			const playerStr = displayPlayers !== null
 				? '👥  **' + displayPlayers +
