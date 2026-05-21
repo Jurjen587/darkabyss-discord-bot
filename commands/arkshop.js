@@ -515,7 +515,7 @@ function createArkShopCommandHandler(options) {
 		const helpLines = [
 			'`' + commandPrefix + 'arkshop` — Browse the shop',
 			'`' + commandPrefix + 'arkshop set eosid <EOS_ID>` — Save your EOS ID',
-			'`' + commandPrefix + 'arkshop set specimen <NAME>` — Save your character name',
+			'`' + commandPrefix + 'arkshop set specimen <SPECIMEN_ID>` — Save your specimen id',
 			'',
 			'Once your EOS ID and specimen are saved, press **🛒 Buy Now** on any package to purchase instantly.',
 		];
