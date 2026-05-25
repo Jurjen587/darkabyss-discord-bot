@@ -1,6 +1,6 @@
 const https = require('https');
 const http = require('http');
-const { MessageActionRow, MessageButton } = require('discord.js');
+const { MessageActionRow, MessageButton, Modal, TextInputComponent } = require('discord.js');
 const { getBalance, setBalance } = require('./balanceStore');
 
 const EMBED_COLOR_DEFAULT = 15859730; // orange
@@ -206,6 +206,11 @@ function buildPackagePageMessage(packages, catId, catName, page, ownerId) {
 		.setLabel('← Categories')
 		.setStyle('SECONDARY');
 
+	const searchButton = new MessageButton()
+		.setCustomId('arkshop:sm:' + catId)
+		.setLabel('Search Tame')
+		.setStyle('PRIMARY');
+
 	let navRow;
 	if (totalPages > 1) {
 		navRow = new MessageActionRow().addComponents(
@@ -219,10 +224,11 @@ function buildPackagePageMessage(packages, catId, catName, page, ownerId) {
 				.setLabel('Next ▶')
 				.setStyle('SECONDARY')
 				.setDisabled(clampedPage >= totalPages - 1),
+			searchButton,
 			backButton
 		);
 	} else {
-		navRow = new MessageActionRow().addComponents(backButton);
+		navRow = new MessageActionRow().addComponents(searchButton, backButton);
 	}
 
 	const pkgLines = visible.map((pkg, i) => {
@@ -250,6 +256,93 @@ function buildPackagePageMessage(packages, catId, catName, page, ownerId) {
 	};
 }
 
+function filterPackagesByQuery(packages, rawQuery) {
+	const query = String(rawQuery || '').trim().toLowerCase();
+	if (!query) return packages;
+
+	return packages.filter((pkg) => {
+		const haystack = [pkg?.name, pkg?.description]
+			.filter(Boolean)
+			.join(' ')
+			.toLowerCase();
+		return haystack.includes(query);
+	});
+}
+
+function buildSearchResultPageMessage(packages, catId, catName, query, page, ownerId) {
+	const pageSize = 4;
+	const safePage = Math.max(0, Number.isInteger(page) ? page : 0);
+	const totalPages = Math.max(1, Math.ceil(packages.length / pageSize));
+	const clampedPage = Math.min(safePage, totalPages - 1);
+	const start = clampedPage * pageSize;
+	const visible = packages.slice(start, start + pageSize);
+	const encoded = encodeCtx({ q: query });
+
+	const selectRow = new MessageActionRow();
+	for (let i = 0; i < pageSize; i += 1) {
+		const pkg = visible[i];
+		selectRow.addComponents(
+			new MessageButton()
+				.setCustomId(pkg ? 'arkshop:pn:' + pkg.id + ':' + catId : 'arkshop:x:s' + i)
+				.setLabel(String(i + 1))
+				.setStyle('SUCCESS')
+				.setDisabled(!pkg)
+		);
+	}
+
+	const navRow = new MessageActionRow();
+	if (totalPages > 1) {
+		navRow.addComponents(
+			new MessageButton()
+				.setCustomId('arkshop:sr:' + catId + ':' + Math.max(0, clampedPage - 1) + ':' + encoded)
+				.setLabel('◀ Prev')
+				.setStyle('SECONDARY')
+				.setDisabled(clampedPage <= 0),
+			new MessageButton()
+				.setCustomId('arkshop:sr:' + catId + ':' + Math.min(totalPages - 1, clampedPage + 1) + ':' + encoded)
+				.setLabel('Next ▶')
+				.setStyle('SECONDARY')
+				.setDisabled(clampedPage >= totalPages - 1)
+		);
+	}
+
+	navRow.addComponents(
+		new MessageButton()
+			.setCustomId('arkshop:sm:' + catId)
+			.setLabel('Search Again')
+			.setStyle('PRIMARY'),
+		new MessageButton()
+			.setCustomId('arkshop:ps:' + catId + ':0')
+			.setLabel('Clear Search')
+			.setStyle('SECONDARY')
+	);
+
+	const pkgLines = visible.map((pkg, i) => {
+		if (!pkg) return '';
+		const price = formatCredits(pkg.price_credits);
+		const desc = pkg.description ? '\n  ' + truncate(pkg.description, 100) : '';
+		return '**' + (i + 1) + '.  ' + pkg.name + '**  ·  ' + price + desc;
+	}).filter(Boolean);
+
+	const pageNote = totalPages > 1 ? '\nPage ' + (clampedPage + 1) + ' of ' + totalPages : '';
+
+	return {
+		embeds: [{
+			title: catName + ' — Search',
+			description:
+				'Query: **' + truncate(query, 60) + '**\n' +
+				'Matches: **' + packages.length + '**' +
+				pageNote +
+				'\n\nSelect a package by pressing a number below.\n\n' +
+				pkgLines.join('\n\n'),
+			color: EMBED_COLOR_DEFAULT,
+			footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
+			timestamp: new Date().toISOString(),
+		}],
+		components: [selectRow, navRow],
+	};
+}
+
 function buildPackageDetailMessage(pkg, catId, catName, commandPrefix, ownerId) {
 	const descLine = pkg.description ? pkg.description + '\n\n' : '';
 
@@ -267,6 +360,10 @@ function buildPackageDetailMessage(pkg, catId, catName, commandPrefix, ownerId) 
 					.setCustomId('arkshop:buy:' + pkg.id)
 					.setLabel('Buy Now')
 					.setStyle('SUCCESS'),
+				new MessageButton()
+					.setCustomId('arkshop:sm:' + catId)
+					.setLabel('Search Tame')
+					.setStyle('PRIMARY'),
 				new MessageButton()
 					.setCustomId('arkshop:ps:' + catId + ':0')
 					.setLabel('← Back')
@@ -544,7 +641,85 @@ function createArkShopInteractionHandler(options) {
 	const requestJson   = makeApiRequester(apiBaseUrl, apiToken);
 
 	return async function handleArkShopInteraction(interaction) {
-		if (!interaction.isButton()) return;
+		if (!interaction.isButton() && !interaction.isModalSubmit()) return;
+
+		if (interaction.isModalSubmit()) {
+			const modalParts = String(interaction.customId || '').split(':');
+			if (modalParts[0] !== 'arkshop' || modalParts[1] !== 'mq') return;
+
+			if (!shopEnabled) {
+				await interaction.reply({
+					content: '🔒 The ARK Shop is currently disabled. Please try again later.',
+					ephemeral: true,
+				});
+				return;
+			}
+
+			const catId = modalParts[2] || '';
+			const ownerId = modalParts[3] || '';
+			if (ownerId && interaction.user.id !== ownerId) {
+				await interaction.reply({
+					content: '❌ This search belongs to another user session.',
+					ephemeral: true,
+				});
+				return;
+			}
+
+			const query = String(interaction.fields.getTextInputValue('arkshop_query') || '').trim();
+			if (!query) {
+				await interaction.reply({
+					content: '❌ Enter a tame/package name to search.',
+					ephemeral: true,
+				});
+				return;
+			}
+
+			await interaction.deferUpdate();
+			try {
+				const [catData, pkgData] = await Promise.all([
+					requestJson('GET', '/categories'),
+					requestJson('GET', '/packages?category_id=' + catId),
+				]);
+
+				const categories = Array.isArray(catData.categories) ? catData.categories : [];
+				const cat = categories.find((c) => String(c.id) === String(catId));
+				const catName = cat ? cat.name : 'Unknown Category';
+				const packages = Array.isArray(pkgData.packages) ? pkgData.packages : [];
+				const filtered = filterPackagesByQuery(packages, query);
+
+				if (filtered.length === 0) {
+					await interaction.editReply({
+						embeds: [{
+							title: catName + ' — Search',
+							description:
+								'No tames/packages found for **' + truncate(query, 60) + '**.\n\nTry a different keyword.',
+							color: EMBED_COLOR_DEFAULT,
+							footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
+							timestamp: new Date().toISOString(),
+						}],
+						components: [
+							new MessageActionRow().addComponents(
+								new MessageButton()
+									.setCustomId('arkshop:sm:' + catId)
+									.setLabel('Search Again')
+									.setStyle('PRIMARY'),
+								new MessageButton()
+									.setCustomId('arkshop:ps:' + catId + ':0')
+									.setLabel('← Back')
+									.setStyle('SECONDARY')
+							),
+						],
+					});
+					return;
+				}
+
+				await interaction.editReply(buildSearchResultPageMessage(filtered, String(catId), catName, query, 0, ownerId));
+			} catch (err) {
+				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
+			}
+
+			return;
+		}
 
 		// customId format: arkshop:<action>:<...params>
 		const parts  = interaction.customId.split(':');
@@ -697,6 +872,96 @@ function createArkShopInteractionHandler(options) {
 				const pkg = await requestJson('GET', '/packages/' + pkgId);
 				const catName = pkg.category_name || 'Unknown Category';
 				await interaction.editReply(buildPackageDetailMessage(pkg, catId || String(pkg.category_id || ''), catName, commandPrefix, ownerId));
+			} catch (err) {
+				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
+			}
+			return;
+		}
+
+		// ── Search button: opens a modal text input ──
+		if (action === 'sm') {
+			const catId = parts[2] || '';
+
+			if (typeof interaction.showModal !== 'function' || !Modal || !TextInputComponent) {
+				await interaction.reply({
+					content: '❌ Search modal is not supported by this Discord.js runtime.',
+					ephemeral: true,
+				});
+				return;
+			}
+
+			const modal = new Modal()
+				.setCustomId('arkshop:mq:' + catId + ':' + (ownerId || interaction.user.id))
+				.setTitle('Search Tames');
+
+			const queryInput = new TextInputComponent()
+				.setCustomId('arkshop_query')
+				.setLabel('Tame or package keyword')
+				.setStyle('SHORT')
+				.setMinLength(2)
+				.setMaxLength(40)
+				.setPlaceholder('e.g. rex, giga, wyvern')
+				.setRequired(true);
+
+			modal.addComponents(new MessageActionRow().addComponents(queryInput));
+			await interaction.showModal(modal);
+			return;
+		}
+
+		// ── Search results page navigation ──
+		if (action === 'sr') {
+			const catId = parts[2];
+			const page = Number.parseInt(parts[3] || '0', 10);
+			const ctx = decodeCtx(parts[4] || '');
+			const query = String(ctx?.q || '').trim();
+			if (!query) {
+				await interaction.reply({
+					content: '❌ Search context expired. Please search again.',
+					ephemeral: true,
+				});
+				return;
+			}
+
+			await interaction.deferUpdate();
+			try {
+				const [catData, pkgData] = await Promise.all([
+					requestJson('GET', '/categories'),
+					requestJson('GET', '/packages?category_id=' + catId),
+				]);
+
+				const categories = Array.isArray(catData.categories) ? catData.categories : [];
+				const cat = categories.find((c) => String(c.id) === String(catId));
+				const catName = cat ? cat.name : 'Unknown Category';
+				const packages = Array.isArray(pkgData.packages) ? pkgData.packages : [];
+				const filtered = filterPackagesByQuery(packages, query);
+
+				if (filtered.length === 0) {
+					await interaction.editReply({
+						embeds: [{
+							title: catName + ' — Search',
+							description:
+								'No tames/packages found for **' + truncate(query, 60) + '**.\n\nTry a different keyword.',
+							color: EMBED_COLOR_DEFAULT,
+							footer: { text: 'DarkAbyss ARK Shop \u00b7 uid:' + ownerId },
+							timestamp: new Date().toISOString(),
+						}],
+						components: [
+							new MessageActionRow().addComponents(
+								new MessageButton()
+									.setCustomId('arkshop:sm:' + catId)
+									.setLabel('Search Again')
+									.setStyle('PRIMARY'),
+								new MessageButton()
+									.setCustomId('arkshop:ps:' + catId + ':0')
+									.setLabel('← Back')
+									.setStyle('SECONDARY')
+							),
+						],
+					});
+					return;
+				}
+
+				await interaction.editReply(buildSearchResultPageMessage(filtered, String(catId), catName, query, Number.isFinite(page) ? page : 0, ownerId));
 			} catch (err) {
 				await interaction.editReply({ content: '❌ ' + err.message, embeds: [], components: [] });
 			}
